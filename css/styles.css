@@ -1,1 +1,216 @@
+/* ==========================================================================
+   SECRET MATE — IAE VALENCIENNES (CAMPUS DU MONT-HOUY)
+   NOUVELLE IDENTITÉ VISUELLE : "NEO-POP CAMPUS & MYSTERY CLUB"
+   Palette : Crème Chaleureux (#FAF6F0), Bordeaux Académique IAE (#8E0E27),
+   Encre Profonde (#16141C) & Accents Pop MSE (Safran, Menthe, Corail, Azur)
+   ========================================================================== */
 
+:root {
+  --bg-cream: #FAF6F0;
+  --bg-paper: #FFFDF9;
+  --iae-crimson: #8E0E27;
+  --iae-crimson-light: #B81434;
+  --iae-crimson-soft: #FCEBEF;
+  --ink-dark: #16141C;
+  --ink-muted: #5C5866;
+  --mse-sun: #FFB800;
+  --mse-mint: #00C48C;
+  --mse-coral: #FF4D6D;
+  --mse-sky: #00A8E8;
+}
+
+body {
+  background-color: var(--bg-cream);
+  background-image:
+    radial-gradient(at 12% 8%, rgba(255, 184, 0, 0.10) 0px, transparent 45%),
+    radial-gradient(at 88% 15%, rgba(142, 14, 39, 0.08) 0px, transparent 50%),
+    radial-gradient(at 50% 90%, rgba(0, 196, 140, 0.07) 0px, transparent 50%);
+  color: var(--ink-dark);
+}
+
+/* Grille de fond subtile façon carnet de campus */
+.bg-campus-grid {
+  background-size: 28px 28px;
+  background-image:
+    linear-gradient(to right, rgba(22, 20, 28, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(22, 20, 28, 0.04) 1px, transparent 1px);
+}
+
+/* Cartes Néo-Éditoriales avec relief tactile */
+.neo-card {
+  background: var(--bg-paper);
+  border: 2px solid #16141C;
+  box-shadow: 0 6px 0 #16141C;
+  transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.neo-card-soft {
+  background: var(--bg-paper);
+  border: 1.5px solid rgba(22, 20, 28, 0.14);
+  box-shadow: 0 10px 30px -8px rgba(22, 20, 28, 0.07);
+}
+
+.neo-btn-primary {
+  background-color: var(--iae-crimson);
+  color: #ffffff;
+  border: 2px solid #16141C;
+  box-shadow: 0 4px 0 #16141C;
+  transition: all 0.15s ease;
+}
+
+.neo-btn-primary:hover:not(:disabled) {
+  background-color: var(--iae-crimson-light);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 0 #16141C;
+}
+
+.neo-btn-primary:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 #16141C;
+}
+
+.neo-btn-yellow {
+  background-color: var(--mse-sun);
+  color: #16141C;
+  border: 2px solid #16141C;
+  box-shadow: 0 4px 0 #16141C;
+  transition: all 0.15s ease;
+}
+
+.neo-btn-yellow:hover:not(:disabled) {
+  background-color: #ffc633;
+  transform: translateY(-2px);
+  box-shadow: 0 6px 0 #16141C;
+}
+
+.neo-btn-yellow:active:not(:disabled) {
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 #16141C;
+}
+
+/* Effet Ticket / Pochette Mystère perforée */
+.mystery-ticket {
+  position: relative;
+  background: #FFFDF9;
+  border: 2px solid #16141C;
+  box-shadow: 0 8px 0 #16141C;
+}
+
+.mystery-ticket::before,
+.mystery-ticket::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  background-color: var(--bg-cream);
+  border: 2px solid #16141C;
+  border-radius: 9999px;
+  transform: translateY(-50%);
+}
+
+.mystery-ticket::before {
+  left: -13px;
+}
+
+.mystery-ticket::after {
+  right: -13px;
+}
+
+/* Sceau de cire / Badge Pochette */
+.wax-seal {
+  background: radial-gradient(circle at 30% 30%, #c9183b, #7a091e);
+  border: 2.5px solid #16141C;
+  box-shadow: 0 4px 0 #16141C, inset 0 2px 4px rgba(255, 255, 255, 0.35);
+}
+
+/* Navigation principale */
+.main-nav-pill {
+  color: #5C5866;
+  border: 2px solid transparent;
+  transition: all 0.18s ease;
+}
+
+.main-nav-pill:hover {
+  color: #16141C;
+  background: rgba(22, 20, 28, 0.05);
+}
+
+.main-nav-pill.active {
+  background: #8E0E27;
+  color: #ffffff;
+  border-color: #16141C;
+  box-shadow: 0 3px 0 #16141C;
+}
+
+/* Sous-onglets du Back-Office BDE */
+.bde-tab-btn {
+  color: #5C5866;
+  border: 2px solid transparent;
+  transition: all 0.15s ease;
+}
+
+.bde-tab-btn:hover {
+  color: #16141C;
+  background: #FAF6F0;
+}
+
+.bde-tab-btn.active {
+  background: #FFB800;
+  color: #16141C;
+  border-color: #16141C;
+  box-shadow: 0 3px 0 #16141C;
+}
+
+/* Animations */
+@keyframes fadeInSlide {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeInSlide 0.28s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes ticketShake {
+  0%, 100% {
+    transform: rotate(0deg) scale(1);
+  }
+  25% {
+    transform: rotate(-3deg) scale(1.06);
+  }
+  75% {
+    transform: rotate(3deg) scale(1.06);
+  }
+}
+
+.slot-spinning {
+  animation: ticketShake 0.16s infinite ease-in-out;
+}
+
+/* Impression de la fiche Pochette */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #printable-pouch-card,
+  #printable-pouch-card * {
+    visibility: visible;
+  }
+  #printable-pouch-card {
+    position: absolute;
+    left: 16px;
+    top: 16px;
+    width: calc(100% - 32px);
+    border: 2px dashed #000 !important;
+    box-shadow: none !important;
+    background: #fff !important;
+    padding: 24px !important;
+  }
+}
