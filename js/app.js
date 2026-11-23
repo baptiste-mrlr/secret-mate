@@ -9,6 +9,7 @@
 const STATE_STORAGE_KEY = 'secret_mate_iae_v4_state';
 const SESSION_EMAIL_KEY = 'secret_mate_iae_student_email';
 const FIREBASE_DB_NODE = 'secret_mate_iae_v4';
+const BROADCAST_CHANNEL_NAME = 'secret_mate_iae_v4_channel';
 
 // ============================================================================
 // CONNEXION GOOGLE FIREBASE REALTIME DATABASE (SANS TERMINAL) :
@@ -17,7 +18,153 @@ const FIREBASE_DB_NODE = 'secret_mate_iae_v4';
 // (Lorsque vous ouvrez secretmateiaeva.html en local sur votre PC, le site reste
 // automatiquement en Mode Local pour vos tests !)
 // ============================================================================
-const FIREBASE_DATABASE_URL = 'https://secret-mate-iae-default-rtdb.europe-west1.firebasedatabase.app';
+const FIREBASE_DATABASE_URL = 'https://secret-mate-4f93a-default-rtdb.europe-west1.firebasedatabase.app/';
+
+/**
+ * Helpers de nettoyage, normalisation et génération d'IDs compatibles Google Firebase
+ */
+function sanitizeForFirebase(obj) {
+  if (obj === undefined) return null;
+  return JSON.parse(JSON.stringify(obj));
+}
+
+function sanitizeFirebaseKey(id) {
+  return String(id || '').replace(/[.#$\[\]\/]/g, '_') || `stu_${Date.now()}`;
+}
+
+function makeParticipantId() {
+  return `stu-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+}
+
+function generateSyncRev() {
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeList(val) {
+  if (Array.isArray(val)) return val.filter(item => item != null);
+  if (val && typeof val === 'object') {
+    return Object.keys(val)
+      .sort((a, b) => {
+        const na = Number(a);
+        const nb = Number(b);
+        if (!isNaN(na) && !isNaN(nb)) return na - nb;
+        return a.localeCompare(b);
+      })
+      .map(k => val[k])
+      .filter(item => item != null);
+  }
+  return [];
+}
+
+function normalizeParticipants(raw) {
+  const arr = normalizeList(raw);
+  const seenIds = new Set();
+  const seenEmails = new Set();
+  const result = [];
+
+  arr.forEach((p, idx) => {
+    if (!p || typeof p !== 'object') return;
+    const email = String(p.email || '').trim().toLowerCase();
+    const rawId = p.id || (email ? `stu-${email.replace(/[^a-z0-9]/g, '-')}` : `stu-${idx + 1}`);
+    const id = sanitizeFirebaseKey(rawId);
+    if (seenIds.has(id) || (email && seenEmails.has(email))) return;
+    seenIds.add(id);
+    if (email) seenEmails.add(email);
+
+    const riddlesRaw = normalizeList(p.riddles);
+    const pouchNumber = Number(p.pouchNumber) > 0 ? Number(p.pouchNumber) : idx + 1;
+    const parsedDrawn = Number(p.drawnPouchNumber);
+    const drawnPouchNumber =
+      p.drawnPouchNumber != null && !isNaN(parsedDrawn) && parsedDrawn > 0 ? parsedDrawn : null;
+
+    result.push({
+      id,
+      firstName: String(p.firstName || '').trim(),
+      lastName: String(p.lastName || '').trim(),
+      email,
+      whatsapp: String(p.whatsapp || '').trim(),
+      promo: String(p.promo || '').trim(),
+      role: String(p.role || 'nouveau'),
+      secretType: String(p.secretType || ''),
+      riddles: [
+        String(riddlesRaw[0] ?? ''),
+        String(riddlesRaw[1] ?? ''),
+        String(riddlesRaw[2] ?? '')
+      ],
+      location: String(p.location || ''),
+      isBackupMate: Boolean(p.isBackupMate),
+      pouchNumber,
+      drawnPouchNumber,
+      hasDrawn: Boolean(p.hasDrawn)
+    });
+  });
+
+  return result;
+}
+
+function normalizeSettings(rawSettings, fallbackSettings = null) {
+  const def = getDefaultSettings();
+  const base = fallbackSettings ? { ...def, ...fallbackSettings } : def;
+  const src = rawSettings && typeof rawSettings === 'object' ? rawSettings : {};
+  const merged = { ...base, ...src };
+
+  const promos = normalizeList(src.promoOptions)
+    .map(p => String(p || '').trim())
+    .filter(Boolean);
+  const locations = normalizeList(src.campusLocations).filter(
+    l => l && typeof l === 'object' && l.name
+  );
+  const secrets = normalizeList(src.secretCategories).filter(
+    s => s && typeof s === 'object' && s.title
+  );
+
+  merged.promoOptions =
+    promos.length > 0
+      ? promos
+      : Array.isArray(base.promoOptions) && base.promoOptions.length > 0
+      ? base.promoOptions
+      : def.promoOptions;
+  merged.campusLocations =
+    locations.length > 0
+      ? locations
+      : Array.isArray(base.campusLocations) && base.campusLocations.length > 0
+      ? base.campusLocations
+      : def.campusLocations;
+  merged.secretCategories =
+    secrets.length > 0
+      ? secrets
+      : Array.isArray(base.secretCategories) && base.secretCategories.length > 0
+      ? base.secretCategories
+      : def.secretCategories;
+
+  merged.registrationsOpen =
+    src.registrationsOpen !== undefined
+      ? Boolean(src.registrationsOpen)
+      : Boolean(base.registrationsOpen);
+  merged.drawingOpen =
+    src.drawingOpen !== undefined ? Boolean(src.drawingOpen) : Boolean(base.drawingOpen);
+  merged.masterRevealForce =
+    src.masterRevealForce !== undefined
+      ? Boolean(src.masterRevealForce)
+      : Boolean(base.masterRevealForce);
+  merged.prioritizeMentors =
+    src.prioritizeMentors !== undefined
+      ? Boolean(src.prioritizeMentors)
+      : Boolean(base.prioritizeMentors);
+  merged.samePromoOnly =
+    src.samePromoOnly !== undefined ? Boolean(src.samePromoOnly) : Boolean(base.samePromoOnly);
+
+  return merged;
+}
+
+function participantsToFirebaseMap(list) {
+  const map = {};
+  (list || []).forEach(p => {
+    const key = sanitizeFirebaseKey(p.id);
+    map[key] = sanitizeForFirebase({ ...p, id: key });
+  });
+  return map;
+}
 
 /**
  * Banques d'idées pour le générateur d'énigmes brise-glace
@@ -562,6 +709,74 @@ const SecretMateAlgorithms = {
     }));
   },
 
+  /**
+   * Insertion incrémentale d'un nouvel inscrit sans chambouler les pochettes déjà distribuées
+   * ni violer l'algorithme de Dérangement (∀i, i ≠ p(i)).
+   */
+  insertNewParticipantIntoCycle(participants, newParticipant, samePromoOnly = false) {
+    const usedPouches = new Set(participants.map(p => Number(p.pouchNumber)).filter(Boolean));
+    let nextPouch = participants.reduce((m, p) => Math.max(m, Number(p.pouchNumber) || 0), 0) + 1;
+    while (usedPouches.has(nextPouch)) nextPouch++;
+
+    const added = {
+      ...newParticipant,
+      pouchNumber: nextPouch,
+      hasDrawn: false
+    };
+
+    if (participants.length === 0) {
+      added.drawnPouchNumber = null;
+      return { participants: [added], added, modifiedPartner: null, rebuildAll: false };
+    }
+
+    const updated = participants.map(p => ({ ...p }));
+
+    // Vérifier si les anciens participants forment déjà un dérangement valide
+    const validPouches = new Set(updated.map(p => p.pouchNumber));
+    const currentAudit = this.verifyDerangement(updated);
+
+    if (!currentAudit.valid && updated.length >= 2) {
+      added.drawnPouchNumber = null;
+      updated.push(added);
+      const regenerated = this.generateDerangement(updated, false, samePromoOnly);
+      const created = regenerated.find(p => p.id === added.id) || added;
+      return { participants: regenerated, added: created, modifiedPartner: null, rebuildAll: true };
+    }
+
+    // Choisir le meilleur partenaire dans le cycle (privilégie !hasDrawn et même filière si samePromoOnly)
+    let bestIdx = 0;
+    let bestScore = -1;
+    updated.forEach((p, idx) => {
+      let score = 0;
+      if (!p.hasDrawn) score += 100;
+      if (samePromoOnly && p.promo === added.promo) score += 50;
+      if (p.drawnPouchNumber != null && p.drawnPouchNumber !== p.pouchNumber && validPouches.has(p.drawnPouchNumber)) {
+        score += 10;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        bestIdx = idx;
+      }
+    });
+
+    const partner = updated[bestIdx];
+    const partnerTargetValid =
+      partner.drawnPouchNumber != null &&
+      partner.drawnPouchNumber !== partner.pouchNumber &&
+      validPouches.has(partner.drawnPouchNumber);
+
+    added.drawnPouchNumber = partnerTargetValid ? partner.drawnPouchNumber : partner.pouchNumber;
+    partner.drawnPouchNumber = added.pouchNumber;
+    updated.push(added);
+
+    return {
+      participants: updated,
+      added,
+      modifiedPartner: partner,
+      rebuildAll: false
+    };
+  },
+
   verifyDerangement(participants) {
     const n = participants.length;
     if (n < 2) return { valid: false, selfDraws: 0, uniqueDraws: 0, samePromoCount: 0, total: n };
@@ -573,7 +788,7 @@ const SecretMateAlgorithms = {
 
     participants.forEach(p => {
       if (p.drawnPouchNumber === p.pouchNumber) selfDraws++;
-      if (p.drawnPouchNumber != null) {
+      if (p.drawnPouchNumber != null && pouchMap.has(p.drawnPouchNumber)) {
         unique.add(p.drawnPouchNumber);
         const target = pouchMap.get(p.drawnPouchNumber);
         if (target && target.promo === p.promo) {
@@ -610,9 +825,15 @@ class SecretMateApp {
     this.broadcastChannel = null;
     this.isStudentEditingOwnProfile = false;
     this.lastUpdatedAt = null;
+    this.lastSyncRev = null;
     this.isFirebaseActive = false;
     this.firebaseDbUrl = null;
     this.firebaseRef = null;
+    this.firebaseStatus = 'local'; // 'local' | 'connecting' | 'connected' | 'error'
+    this.firebaseErrorDetail = '';
+    this.lastSyncTimeStr = null;
+    this.isRegistering = false;
+    this.isDrawing = false;
 
     this.init();
   }
@@ -631,88 +852,192 @@ class SecretMateApp {
     }
   }
 
+  async resolveFirebaseDatabaseUrl() {
+    if (FIREBASE_DATABASE_URL && FIREBASE_DATABASE_URL.trim().startsWith('http')) {
+      return FIREBASE_DATABASE_URL.trim().replace(/\/$/, '').replace(/\.json$/i, '');
+    }
+    try {
+      const response = await fetch('/__/firebase/init.json', { cache: 'no-store' });
+      if (response.ok) {
+        const cfg = await response.json();
+        if (cfg && cfg.databaseURL) {
+          return String(cfg.databaseURL).trim().replace(/\/$/, '').replace(/\.json$/i, '');
+        }
+      }
+    } catch (e) {}
+    return null;
+  }
+
   /**
    * Détecte automatiquement :
    * - En local sur l'ordinateur (file://) -> Mode Local (localStorage) pour vos tests PC
-   * - En ligne (https://) -> Connecte Google Firebase Realtime Database (via FIREBASE_DATABASE_URL ou /__/firebase/init.json)
+   * - En ligne (https://) -> Vérifie réellement la Realtime Database puis active WebSocket + filet REST
    */
   async initFirebaseOrLocalEngine() {
-    // 1. Si ouvert directement depuis l'ordinateur (double-clic sur secretmateiaeva.html) -> Mode Local (Tests PC)
     if (window.location.protocol === 'file:') {
-      this.updateSyncModeBadge(false);
+      this.firebaseStatus = 'local';
+      this.isFirebaseActive = false;
+      this.firebaseErrorDetail = '';
+      this.updateSyncModeBadge();
       return;
     }
 
-    try {
-      let firebaseConfig = null;
+    const dbUrl = await this.resolveFirebaseDatabaseUrl();
+    if (!dbUrl) {
+      this.firebaseStatus = 'local';
+      this.isFirebaseActive = false;
+      this.firebaseErrorDetail = '';
+      this.updateSyncModeBadge();
+      return;
+    }
 
-      // 2. Si l'URL de la Realtime Database a été renseignée dans FIREBASE_DATABASE_URL en haut de ce fichier
-      if (FIREBASE_DATABASE_URL && FIREBASE_DATABASE_URL.trim().startsWith('http')) {
-        firebaseConfig = {
-          databaseURL: FIREBASE_DATABASE_URL.trim().replace(/\/$/, '')
-        };
-      } else {
-        // 3. Sinon, auto-détection native si hébergé sur Firebase Hosting
-        const response = await fetch('/__/firebase/init.json', { cache: 'no-store' });
-        if (response.ok) {
-          firebaseConfig = await response.json();
-        }
-      }
+    this.firebaseDbUrl = dbUrl;
+    this.firebaseStatus = 'connecting';
+    this.firebaseErrorDetail = '';
+    this.updateSyncModeBadge();
 
-      if (!firebaseConfig || !firebaseConfig.databaseURL) {
-        this.updateSyncModeBadge(false);
-        return;
-      }
-
-      this.isFirebaseActive = true;
-      this.firebaseDbUrl = firebaseConfig.databaseURL.replace(/\/$/, '');
-      this.updateSyncModeBadge(true);
-
-      // Connexion WebSocket Temps Réel native via le SDK officiel Google Firebase
-      if (window.firebase && typeof window.firebase.initializeApp === 'function') {
-        if (!window.firebase.apps || window.firebase.apps.length === 0) {
-          window.firebase.initializeApp(firebaseConfig);
-        }
-        this.firebaseRef = window.firebase.database().ref(FIREBASE_DB_NODE);
-        this.firebaseRef.on('value', snapshot => {
-          const data = snapshot.val();
-          if (data && Array.isArray(data.participants)) {
-            this.applyIncomingState(data);
-          } else if (data === null) {
-            // Initialise automatiquement la base Firebase lors du tout premier déploiement
-            this.saveState(true);
-          }
-        });
-      } else {
-        // Fallback REST automatique si le script CDN est bloqué par un pare-feu
-        await this.pullFromFirebaseIfActive();
-      }
-    } catch (e) {
-      // Exécution locale sur ordinateur : utilise localStorage automatiquement
-      this.updateSyncModeBadge(false);
+    const result = await this.pullFromFirebase({ isInitial: true });
+    if (result.ok) {
+      this.attachFirebaseWebSocket();
     }
   }
 
-  updateSyncModeBadge(isFirebase) {
-    const badge = document.getElementById('sync-mode-badge');
-    const label = document.getElementById('sync-mode-label');
-    if (!badge || !label) return;
+  attachFirebaseWebSocket() {
+    if (!this.firebaseDbUrl || this.firebaseRef) return;
+    try {
+      if (window.firebase && typeof window.firebase.initializeApp === 'function') {
+        if (!window.firebase.apps || window.firebase.apps.length === 0) {
+          window.firebase.initializeApp({ databaseURL: this.firebaseDbUrl });
+        }
+        this.firebaseRef = window.firebase.database().ref(FIREBASE_DB_NODE);
+        this.firebaseRef.on(
+          'value',
+          snapshot => {
+            const data = snapshot.val();
+            this.firebaseStatus = 'connected';
+            this.isFirebaseActive = true;
+            this.firebaseErrorDetail = '';
+            this.lastSyncTimeStr = new Date().toLocaleTimeString('fr-FR');
+            if (data && typeof data === 'object') {
+              this.applyIncomingState(data);
+            } else {
+              this.updateSyncModeBadge();
+            }
+          },
+          error => {
+            this.firebaseStatus = 'error';
+            this.firebaseErrorDetail = `Écoute temps réel Firebase bloquée ou refusée (${
+              error?.message || error?.code || 'PERMISSION_DENIED'
+            }). Le mode secours REST tente de synchroniser automatiquement.`;
+            this.updateSyncModeBadge();
+          }
+        );
+      }
+    } catch (e) {}
+  }
 
-    if (isFirebase) {
-      badge.className =
-        'px-3.5 py-2.5 rounded-xl text-xs font-mono font-extrabold bg-mse-green text-ink border-2 border-white flex items-center gap-1.5 shadow-sm';
-      badge.innerHTML = `
-        <i data-lucide="flame" class="w-4 h-4 text-iae-700"></i>
-        <span id="sync-mode-label">Firebase Temps Réel Actif</span>
-      `;
-    } else {
-      badge.className =
-        'px-3.5 py-2.5 rounded-xl text-xs font-mono font-bold bg-white/10 text-mse-yellow border border-white/20 flex items-center gap-1.5';
-      badge.innerHTML = `
-        <i data-lucide="laptop" class="w-4 h-4 text-mse-yellow"></i>
-        <span id="sync-mode-label">Mode Local (Tests PC)</span>
-      `;
+  async forceSyncWithFirebase() {
+    if (window.location.protocol === 'file:' || !this.firebaseDbUrl) {
+      this.updateSyncModeBadge();
+      this.showToast(
+        'Mode Local actif sur votre ordinateur (aucune synchronisation distante en file://).',
+        'info'
+      );
+      return;
     }
+
+    this.firebaseStatus = 'connecting';
+    this.updateSyncModeBadge();
+    const result = await this.pullFromFirebase({ isInitial: true });
+    if (result.ok) {
+      this.attachFirebaseWebSocket();
+      this.showToast(`Synchronisé avec Google Firebase (${this.lastSyncTimeStr}) !`, 'success');
+    } else {
+      this.showToast(this.firebaseErrorDetail || 'Échec de connexion à Google Firebase.', 'error');
+    }
+  }
+
+  updateSyncModeBadge() {
+    const badge = document.getElementById('sync-mode-badge');
+    const heroPill = document.getElementById('hero-sync-pill');
+    const errBanner = document.getElementById('firebase-error-banner');
+
+    if (badge) {
+      if (this.firebaseStatus === 'connected') {
+        badge.className =
+          'px-3.5 py-2.5 rounded-xl text-xs font-mono font-extrabold bg-mse-green hover:bg-emerald-400 text-ink border-2 border-white flex items-center gap-1.5 shadow-sm transition cursor-pointer';
+        badge.title = `Synchronisé avec Firebase${this.lastSyncTimeStr ? ' à ' + this.lastSyncTimeStr : ''} — Cliquer pour resynchroniser`;
+        badge.innerHTML = `
+          <i data-lucide="flame" class="w-4 h-4 text-iae-700"></i>
+          <span id="sync-mode-label">Firebase Connecté (Sync Live)</span>
+        `;
+      } else if (this.firebaseStatus === 'error') {
+        badge.className =
+          'px-3.5 py-2.5 rounded-xl text-xs font-mono font-extrabold bg-mse-coral hover:bg-iae-700 text-white border-2 border-white flex items-center gap-1.5 shadow-sm transition cursor-pointer';
+        badge.title = this.firebaseErrorDetail || 'Erreur de connexion Firebase — Cliquer pour retester';
+        badge.innerHTML = `
+          <i data-lucide="alert-triangle" class="w-4 h-4 text-mse-yellow"></i>
+          <span id="sync-mode-label">Erreur Firebase (Cliquer pour tester)</span>
+        `;
+      } else if (this.firebaseStatus === 'connecting') {
+        badge.className =
+          'px-3.5 py-2.5 rounded-xl text-xs font-mono font-bold bg-mse-yellow text-ink border-2 border-white flex items-center gap-1.5 transition cursor-pointer';
+        badge.innerHTML = `
+          <i data-lucide="refresh-cw" class="w-4 h-4 text-ink animate-spin"></i>
+          <span id="sync-mode-label">Connexion Firebase...</span>
+        `;
+      } else {
+        badge.className =
+          'px-3.5 py-2.5 rounded-xl text-xs font-mono font-bold bg-white/10 hover:bg-white/20 text-mse-yellow border border-white/20 flex items-center gap-1.5 transition cursor-pointer';
+        badge.title = 'Tests en local (localStorage)';
+        badge.innerHTML = `
+          <i data-lucide="laptop" class="w-4 h-4 text-mse-yellow"></i>
+          <span id="sync-mode-label">Mode Local (Tests PC)</span>
+        `;
+      }
+    }
+
+    if (heroPill) {
+      if (this.firebaseStatus === 'connected') {
+        heroPill.className = 'text-mse-green font-bold';
+        heroPill.textContent = '● Sync Firebase Live';
+      } else if (this.firebaseStatus === 'error') {
+        heroPill.className = 'text-mse-coral font-bold';
+        heroPill.textContent = '● Erreur Sync Firebase';
+      } else if (this.firebaseStatus === 'connecting') {
+        heroPill.className = 'text-mse-yellow font-bold';
+        heroPill.textContent = '● Connexion Firebase...';
+      } else {
+        heroPill.className = 'text-mse-yellow font-bold';
+        heroPill.textContent = '● Mode Local (Tests PC)';
+      }
+    }
+
+    if (errBanner) {
+      if (this.firebaseStatus === 'error' && this.firebaseErrorDetail) {
+        errBanner.classList.remove('hidden');
+        errBanner.innerHTML = `
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div class="space-y-1">
+              <div class="font-mono font-extrabold text-mse-yellow uppercase">
+                ⚠️ Synchronisation multi-appareils inactive (Google Firebase injoignable)
+              </div>
+              <p class="font-medium text-white">${this.escapeHtml(this.firebaseErrorDetail)}</p>
+              <p class="font-mono text-[11px] text-amber-200">
+                URL configurée : <code>${this.escapeHtml(this.firebaseDbUrl || FIREBASE_DATABASE_URL)}</code> — Vérifiez dans <strong>console.firebase.google.com &gt; Realtime Database</strong> que la base existe et que ses Règles autorisent <code>".read": true, ".write": true</code>.
+              </p>
+            </div>
+            <button type="button" onclick="app.forceSyncWithFirebase()" class="px-4 py-2 rounded-xl bg-white text-ink font-mono font-extrabold text-xs shrink-0 hover:bg-mse-yellow transition">
+              Retester maintenant
+            </button>
+          </div>
+        `;
+      } else {
+        errBanner.classList.add('hidden');
+        errBanner.innerHTML = '';
+      }
+    }
+
     if (window.lucide) {
       window.lucide.createIcons();
     }
@@ -733,30 +1058,15 @@ class SecretMateApp {
       const raw = localStorage.getItem(STATE_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed && Array.isArray(parsed.participants) && parsed.participants.length > 0) {
-          this.lastUpdatedAt = parsed.updatedAt || null;
-          this.participants = parsed.participants;
-          const def = getDefaultSettings();
-          this.settings = {
-            ...def,
-            ...(parsed.settings || {}),
-            promoOptions:
-              Array.isArray(parsed.settings?.promoOptions) &&
-              parsed.settings.promoOptions.length > 0
-                ? parsed.settings.promoOptions
-                : def.promoOptions,
-            campusLocations:
-              Array.isArray(parsed.settings?.campusLocations) &&
-              parsed.settings.campusLocations.length > 0
-                ? parsed.settings.campusLocations
-                : def.campusLocations,
-            secretCategories:
-              Array.isArray(parsed.settings?.secretCategories) &&
-              parsed.settings.secretCategories.length > 0
-                ? parsed.settings.secretCategories
-                : def.secretCategories
-          };
-          return;
+        if (parsed && parsed.participants != null) {
+          const normalized = normalizeParticipants(parsed.participants);
+          if (normalized.length > 0 || parsed.settings) {
+            this.lastUpdatedAt = parsed.updatedAt || null;
+            this.lastSyncRev = parsed.syncRev || null;
+            this.participants = normalized;
+            this.settings = normalizeSettings(parsed.settings);
+            return;
+          }
         }
       }
     } catch (e) {
@@ -765,34 +1075,267 @@ class SecretMateApp {
 
     this.participants = getInitialDemoParticipants();
     this.settings = getDefaultSettings();
-    this.saveState(false);
+    this.saveLocalCache(false);
   }
 
-  saveState(broadcast = true) {
+  saveLocalCache(broadcastTab = true) {
     const nowIso = new Date().toISOString();
+    const rev = generateSyncRev();
     this.lastUpdatedAt = nowIso;
-    const payload = {
+    this.lastSyncRev = rev;
+    const payload = sanitizeForFirebase({
       updatedAt: nowIso,
+      syncRev: rev,
       settings: this.settings,
       participants: this.participants
-    };
+    });
     try {
       localStorage.setItem(STATE_STORAGE_KEY, JSON.stringify(payload));
-      if (broadcast && this.broadcastChannel) {
+      if (broadcastTab && this.broadcastChannel) {
         this.broadcastChannel.postMessage({ type: 'STATE_UPDATED', payload });
       }
-      if (broadcast) {
-        this.pushToFirebaseIfActive(payload);
-      }
     } catch (e) {
-      console.error('Erreur sauvegarde:', e);
+      console.error('Erreur sauvegarde locale:', e);
     }
+    return payload;
+  }
+
+  async saveSettingsOnly() {
+    const payload = this.saveLocalCache(true);
+    return await this.writeToFirebase(
+      '',
+      {
+        updatedAt: payload.updatedAt,
+        syncRev: payload.syncRev,
+        settings: payload.settings
+      },
+      'PATCH'
+    );
+  }
+
+  async saveParticipantPatch(patchFields) {
+    const payload = this.saveLocalCache(true);
+    const body = {
+      updatedAt: payload.updatedAt,
+      syncRev: payload.syncRev,
+      ...patchFields
+    };
+    return await this.writeToFirebase('', body, 'PATCH');
+  }
+
+  async saveFullState({ usePut = false, includeSettings = true } = {}) {
+    const payload = this.saveLocalCache(true);
+    const body = {
+      updatedAt: payload.updatedAt,
+      syncRev: payload.syncRev,
+      participants: participantsToFirebaseMap(this.participants)
+    };
+    if (includeSettings) {
+      body.settings = payload.settings;
+    }
+    return await this.writeToFirebase('', body, usePut ? 'PUT' : 'PATCH');
+  }
+
+  async writeToFirebase(subPath, bodyObj, method = 'PATCH', { silentOnError = false } = {}) {
+    if (!this.firebaseDbUrl || window.location.protocol === 'file:') {
+      return { ok: true, localOnly: true };
+    }
+
+    const cleanBody = sanitizeForFirebase(bodyObj);
+    const pathSuffix = subPath ? '/' + subPath.replace(/^\/+/, '') : '';
+    const url = `${this.firebaseDbUrl}/${FIREBASE_DB_NODE}${pathSuffix}.json`;
+
+    try {
+      const res = await fetch(url, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cleanBody)
+      });
+
+      if (!res.ok) {
+        let msg = `Erreur d'écriture Firebase (HTTP ${res.status}).`;
+        if (res.status === 404) {
+          msg = `Base Firebase introuvable (HTTP 404) à l'adresse ${this.firebaseDbUrl}. Modifiez FIREBASE_DATABASE_URL dans js/app.js.`;
+        } else if (res.status === 401 || res.status === 403) {
+          msg = `Écriture refusée par Firebase (HTTP ${res.status}). Vérifiez que vos Règles Realtime Database autorisent ".write": true.`;
+        }
+        this.firebaseStatus = 'error';
+        this.isFirebaseActive = false;
+        this.firebaseErrorDetail = msg;
+        this.updateSyncModeBadge();
+        if (!silentOnError) {
+          this.showToast(`⚠️ Modification enregistrée localement mais non envoyée au Cloud : ${msg}`, 'error');
+        }
+        return { ok: false, status: res.status };
+      }
+
+      this.firebaseStatus = 'connected';
+      this.isFirebaseActive = true;
+      this.firebaseErrorDetail = '';
+      this.lastSyncTimeStr = new Date().toLocaleTimeString('fr-FR');
+      this.updateSyncModeBadge();
+      return { ok: true };
+    } catch (err) {
+      this.firebaseStatus = 'error';
+      this.firebaseErrorDetail = `Impossible d'envoyer les données vers Firebase (${
+        err?.message || 'hors-ligne'
+      }). Vérifiez votre connexion Internet.`;
+      this.updateSyncModeBadge();
+      if (!silentOnError) {
+        this.showToast(`⚠️ Hors-ligne ou Firebase injoignable : modification sauvée localement uniquement.`, 'error');
+      }
+      return { ok: false, error: err };
+    }
+  }
+
+  async pullFromFirebase({ isInitial = false, silent = false } = {}) {
+    if (!this.firebaseDbUrl || window.location.protocol === 'file:') {
+      return { ok: false, localOnly: true };
+    }
+
+    try {
+      const res = await fetch(`${this.firebaseDbUrl}/${FIREBASE_DB_NODE}.json`, {
+        cache: 'no-store'
+      });
+
+      if (!res.ok) {
+        let msg = `Erreur de lecture Firebase (HTTP ${res.status}).`;
+        if (res.status === 404) {
+          msg = `Base Firebase introuvable (HTTP 404) à l'adresse ${this.firebaseDbUrl}. Vérifiez l'URL exacte dans console.firebase.google.com et modifiez la ligne 20 de js/app.js.`;
+        } else if (res.status === 401 || res.status === 403) {
+          msg = `Lecture refusée par Firebase (HTTP ${res.status}). Passez les règles Realtime Database (.read et .write) à true.`;
+        }
+        this.firebaseStatus = 'error';
+        this.isFirebaseActive = false;
+        this.firebaseErrorDetail = msg;
+        this.updateSyncModeBadge();
+        if (!silent && !isInitial) {
+          this.showToast(msg, 'error');
+        }
+        return { ok: false, status: res.status };
+      }
+
+      const data = await res.json();
+      this.isFirebaseActive = true;
+      this.firebaseStatus = 'connected';
+      this.firebaseErrorDetail = '';
+      this.lastSyncTimeStr = new Date().toLocaleTimeString('fr-FR');
+
+      if (data === null) {
+        // Premier démarrage sur base Firebase vierge : on y pousse les données initiales
+        const payload = this.saveLocalCache(false);
+        await this.writeToFirebase(
+          '',
+          {
+            updatedAt: payload.updatedAt,
+            syncRev: payload.syncRev,
+            settings: payload.settings,
+            participants: participantsToFirebaseMap(this.participants)
+          },
+          'PUT'
+        );
+      } else if (data && typeof data === 'object') {
+        this.applyIncomingState(data, { force: isInitial });
+      }
+
+      this.updateSyncModeBadge();
+      return { ok: true, data };
+    } catch (err) {
+      this.firebaseStatus = 'error';
+      this.firebaseErrorDetail = `Impossible de joindre Firebase (${
+        err?.message || 'erreur réseau'
+      }). Vérifiez votre connexion Internet.`;
+      this.updateSyncModeBadge();
+      return { ok: false, error: err };
+    }
+  }
+
+  async fetchLatestRemoteParticipants() {
+    if (!this.firebaseDbUrl || window.location.protocol === 'file:' || !this.isFirebaseActive) {
+      return false;
+    }
+    try {
+      const res = await fetch(`${this.firebaseDbUrl}/${FIREBASE_DB_NODE}/participants.json`, {
+        cache: 'no-store'
+      });
+      if (!res.ok) return false;
+      const raw = await res.json();
+      if (raw != null) {
+        const normalized = normalizeParticipants(raw);
+        if (normalized.length > 0) {
+          this.participants = normalized;
+          return true;
+        }
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  async fetchLatestRemoteStateForRegistration() {
+    if (!this.firebaseDbUrl || window.location.protocol === 'file:') {
+      return { ok: true, localOnly: true };
+    }
+    try {
+      const res = await fetch(`${this.firebaseDbUrl}/${FIREBASE_DB_NODE}.json`, {
+        cache: 'no-store'
+      });
+      if (!res.ok) return { ok: false, status: res.status };
+      const data = await res.json();
+      if (data && typeof data === 'object') {
+        if (data.participants != null) {
+          const normalized = normalizeParticipants(data.participants);
+          if (normalized.length > 0) {
+            this.participants = normalized;
+          }
+        }
+        if (data.settings) {
+          this.settings = normalizeSettings(data.settings, this.settings);
+        }
+        this.isFirebaseActive = true;
+        this.firebaseStatus = 'connected';
+        this.firebaseErrorDetail = '';
+      }
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e };
+    }
+  }
+
+  async checkFirebaseRevision() {
+    if (!this.firebaseDbUrl || window.location.protocol === 'file:') return;
+    if (this.firebaseStatus === 'connecting') return;
+    try {
+      const res = await fetch(`${this.firebaseDbUrl}/${FIREBASE_DB_NODE}/syncRev.json`, {
+        cache: 'no-store'
+      });
+      if (!res.ok) {
+        if (this.firebaseStatus === 'connected') {
+          this.firebaseStatus = 'error';
+          this.isFirebaseActive = false;
+          this.firebaseErrorDetail = `Connexion perdue avec Firebase (HTTP ${res.status}).`;
+          this.updateSyncModeBadge();
+        }
+        return;
+      }
+      const remoteRev = await res.json();
+      const recoveringFromError = this.firebaseStatus !== 'connected';
+      this.firebaseStatus = 'connected';
+      this.isFirebaseActive = true;
+      this.firebaseErrorDetail = '';
+      this.lastSyncTimeStr = new Date().toLocaleTimeString('fr-FR');
+
+      if (remoteRev == null || remoteRev !== this.lastSyncRev || recoveringFromError) {
+        await this.pullFromFirebase({ silent: true });
+      } else {
+        this.updateSyncModeBadge();
+      }
+    } catch (e) {}
   }
 
   initRealtimeSync() {
     // Synchronisation instantanée entre onglets pour les tests en local sur ordinateur
     if ('BroadcastChannel' in window) {
-      this.broadcastChannel = new BroadcastChannel('secret_mate_iae_v3_channel');
+      this.broadcastChannel = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
       this.broadcastChannel.onmessage = event => {
         if (event.data && event.data.type === 'STATE_UPDATED') {
           this.applyIncomingState(event.data.payload);
@@ -808,46 +1351,67 @@ class SecretMateApp {
       }
     });
 
-    // Filet de sécurité Firebase REST si le WebSocket SDK n'est pas utilisé
+    // Filet de sécurité REST léger toutes les 3s (indispensable si WebSocket bloqué sur Wi-Fi campus)
     setInterval(() => {
-      if (this.isFirebaseActive && !this.firebaseRef) {
-        this.pullFromFirebaseIfActive();
+      this.checkFirebaseRevision();
+    }, 3000);
+
+    // Resynchronisation immédiate dès que l'utilisateur revient sur l'onglet / déverrouille son téléphone
+    window.addEventListener('focus', () => {
+      this.checkFirebaseRevision();
+    });
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) {
+        this.checkFirebaseRevision();
       }
-    }, 2500);
+    });
   }
 
-  applyIncomingState(data) {
-    if (!data || !Array.isArray(data.participants)) return;
-    // Ignore si l'état reçu est strictement identique au dernier état connu
-    if (data.updatedAt && this.lastUpdatedAt && data.updatedAt === this.lastUpdatedAt) {
-      return;
+  applyIncomingState(data, { force = false } = {}) {
+    if (!data || typeof data !== 'object') return;
+
+    const incomingRev = data.syncRev || null;
+    const incomingUpdatedAt = data.updatedAt || null;
+
+    if (!force) {
+      if (incomingRev && this.lastSyncRev && incomingRev === this.lastSyncRev) {
+        return;
+      }
+      if (!incomingRev && incomingUpdatedAt && this.lastUpdatedAt && incomingUpdatedAt === this.lastUpdatedAt) {
+        return;
+      }
     }
 
-    this.lastUpdatedAt = data.updatedAt || new Date().toISOString();
+    if (incomingRev) this.lastSyncRev = incomingRev;
+    this.lastUpdatedAt = incomingUpdatedAt || new Date().toISOString();
+
     const prevRevealed = this.isRevealedNow();
-    this.participants = data.participants;
-    const def = getDefaultSettings();
-    this.settings = {
-      ...def,
-      ...this.settings,
-      ...(data.settings || {}),
-      promoOptions:
-        Array.isArray(data.settings?.promoOptions) && data.settings.promoOptions.length > 0
-          ? data.settings.promoOptions
-          : this.settings.promoOptions || def.promoOptions,
-      campusLocations:
-        Array.isArray(data.settings?.campusLocations) && data.settings.campusLocations.length > 0
-          ? data.settings.campusLocations
-          : this.settings.campusLocations || def.campusLocations,
-      secretCategories:
-        Array.isArray(data.settings?.secretCategories) && data.settings.secretCategories.length > 0
-          ? data.settings.secretCategories
-          : this.settings.secretCategories || def.secretCategories
-    };
+
+    if (data.participants != null) {
+      const normalized = normalizeParticipants(data.participants);
+      if (normalized.length > 0 || Array.isArray(data.participants)) {
+        this.participants = normalized;
+      }
+    }
+
+    if (data.settings) {
+      this.settings = normalizeSettings(data.settings, this.settings);
+    }
+
     const nowRevealed = this.isRevealedNow();
 
     try {
-      localStorage.setItem(STATE_STORAGE_KEY, JSON.stringify(data));
+      localStorage.setItem(
+        STATE_STORAGE_KEY,
+        JSON.stringify(
+          sanitizeForFirebase({
+            updatedAt: this.lastUpdatedAt,
+            syncRev: this.lastSyncRev,
+            settings: this.settings,
+            participants: this.participants
+          })
+        )
+      );
     } catch (e) {}
 
     this.renderAll();
@@ -1091,8 +1655,9 @@ class SecretMateApp {
     this.showToast('3 idées d’énigmes générées !', 'info');
   }
 
-  handleRegistration(event) {
+  async handleRegistration(event) {
     event.preventDefault();
+    if (this.isRegistering) return;
 
     if (!this.settings.registrationsOpen) {
       this.showToast('Les inscriptions sont actuellement fermées par le BDE.', 'error');
@@ -1128,66 +1693,104 @@ class SecretMateApp {
       return;
     }
 
-    const existingIdx = this.participants.findIndex(p => p.email.toLowerCase() === email);
-
-    if (existingIdx !== -1) {
-      this.participants[existingIdx] = {
-        ...this.participants[existingIdx],
-        firstName,
-        lastName,
-        whatsapp,
-        promo,
-        role,
-        secretType,
-        riddles: [r1, r2, r3],
-        location,
-        isBackupMate
-      };
-    } else {
-      const newParticipant = {
-        id: `stu-${Date.now()}`,
-        firstName,
-        lastName,
-        email,
-        whatsapp,
-        promo,
-        role,
-        secretType,
-        riddles: [r1, r2, r3],
-        location,
-        isBackupMate,
-        pouchNumber: this.participants.length + 1,
-        drawnPouchNumber: null,
-        hasDrawn: false
-      };
-      this.participants.push(newParticipant);
-
-      this.participants = SecretMateAlgorithms.assignNonAlphabeticalNumbers(this.participants);
-      this.participants = SecretMateAlgorithms.generateDerangement(
-        this.participants,
-        this.settings.prioritizeMentors,
-        this.settings.samePromoOnly
-      );
-
-      const created = this.participants.find(p => p.email.toLowerCase() === email);
-      if (created) created.hasDrawn = false;
+    const submitBtn = event.target?.querySelector('button[type="submit"]');
+    const originalBtnHtml = submitBtn ? submitBtn.innerHTML : '';
+    this.isRegistering = true;
+    if (submitBtn) {
+      submitBtn.disabled = true;
+      submitBtn.innerHTML = '<span>Enregistrement en cours...</span>';
     }
 
-    this.loggedInEmail = email;
-    localStorage.setItem(SESSION_EMAIL_KEY, email);
-    this.saveState();
+    try {
+      // Récupère la dernière version Firebase juste avant d'enregistrer pour éviter toute collision
+      await this.fetchLatestRemoteStateForRegistration();
 
-    document.getElementById('registration-form').reset();
-    this.switchView('participant');
+      if (!this.settings.registrationsOpen) {
+        this.renderAll();
+        this.showToast('Les inscriptions viennent d’être clôturées par le BDE.', 'error');
+        return;
+      }
 
-    const me = this.participants.find(p => p.email.toLowerCase() === email);
-    this.showToast(
-      `Inscription validée pour ${email} ! Tu as reçu la Pochette #${String(me.pouchNumber).padStart(
-        2,
-        '0'
-      )}.`,
-      'success'
-    );
+      const existingIdx = this.participants.findIndex(p => p.email.toLowerCase() === email);
+
+      if (existingIdx !== -1) {
+        const updatedExisting = {
+          ...this.participants[existingIdx],
+          id: sanitizeFirebaseKey(this.participants[existingIdx].id),
+          firstName,
+          lastName,
+          whatsapp,
+          promo,
+          role,
+          secretType,
+          riddles: [r1, r2, r3],
+          location,
+          isBackupMate
+        };
+        this.participants[existingIdx] = updatedExisting;
+        await this.saveParticipantPatch({
+          [`participants/${updatedExisting.id}`]: updatedExisting
+        });
+      } else {
+        const newParticipant = {
+          id: makeParticipantId(),
+          firstName,
+          lastName,
+          email,
+          whatsapp,
+          promo,
+          role,
+          secretType,
+          riddles: [r1, r2, r3],
+          location,
+          isBackupMate,
+          pouchNumber: 1,
+          drawnPouchNumber: null,
+          hasDrawn: false
+        };
+
+        const insertion = SecretMateAlgorithms.insertNewParticipantIntoCycle(
+          this.participants,
+          newParticipant,
+          this.settings.samePromoOnly
+        );
+        this.participants = insertion.participants;
+
+        if (insertion.rebuildAll) {
+          await this.saveFullState({ includeSettings: false });
+        } else {
+          const patch = {
+            [`participants/${sanitizeFirebaseKey(insertion.added.id)}`]: insertion.added
+          };
+          if (insertion.modifiedPartner && insertion.modifiedPartner.id !== insertion.added.id) {
+            patch[`participants/${sanitizeFirebaseKey(insertion.modifiedPartner.id)}/drawnPouchNumber`] =
+              insertion.modifiedPartner.drawnPouchNumber;
+          }
+          await this.saveParticipantPatch(patch);
+        }
+      }
+
+      this.loggedInEmail = email;
+      localStorage.setItem(SESSION_EMAIL_KEY, email);
+
+      document.getElementById('registration-form').reset();
+      this.switchView('participant');
+
+      const me = this.participants.find(p => p.email.toLowerCase() === email);
+      this.showToast(
+        `Inscription validée pour ${email} ! Tu as reçu la Pochette #${String(
+          me ? me.pouchNumber : 1
+        ).padStart(2, '0')}.`,
+        'success'
+      );
+    } finally {
+      this.isRegistering = false;
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = originalBtnHtml;
+        if (window.lucide) window.lucide.createIcons();
+      }
+    }
   }
 
   /**
@@ -1263,13 +1866,18 @@ class SecretMateApp {
 
     const secContainer = document.getElementById('reg-secrets-container');
     if (secContainer) {
+      const prevSecretChecked = document.querySelector('input[name="reg-secret"]:checked')?.value;
+      const validPrev =
+        prevSecretChecked &&
+        this.settings.secretCategories.some(s => s.title === prevSecretChecked);
+
       secContainer.innerHTML = this.settings.secretCategories
         .map(
           (sec, idx) => `
         <label class="flex flex-col justify-between p-3.5 rounded-2xl border-2 border-ink/20 hover:border-ink cursor-pointer transition has-[:checked]:border-ink has-[:checked]:bg-iae-50">
           <div class="flex items-center gap-2">
             <input type="radio" name="reg-secret" value="${this.escapeHtml(sec.title)}" ${
-            idx === 0 ? 'checked' : ''
+            (validPrev ? sec.title === prevSecretChecked : idx === 0) ? 'checked' : ''
           } class="accent-iae-700" />
             <span class="font-display font-extrabold text-sm text-ink">${this.escapeHtml(
               sec.icon
@@ -1397,40 +2005,32 @@ class SecretMateApp {
     document.getElementById('p-secret').textContent = student.secretType;
     document.getElementById('p-backup-banner')?.classList.toggle('hidden', !student.isBackupMate);
 
-    if (!student.drawnPouchNumber || student.drawnPouchNumber === student.pouchNumber) {
-      this.participants = SecretMateAlgorithms.generateDerangement(
-        this.participants,
-        this.settings.prioritizeMentors,
-        this.settings.samePromoOnly
-      );
-      this.saveState(false);
-    }
-
-    const updatedStudent = this.participants.find(p => p.id === student.id);
-    const targetMate = this.participants.find(
-      p => p.pouchNumber === updatedStudent.drawnPouchNumber
-    );
+    const updatedStudent = student;
+    const targetMate =
+      updatedStudent.drawnPouchNumber && updatedStudent.drawnPouchNumber !== updatedStudent.pouchNumber
+        ? this.participants.find(p => p.pouchNumber === updatedStudent.drawnPouchNumber)
+        : null;
 
     const stateDrawingClosed = document.getElementById('state-drawing-closed');
     const stateNotDrawn = document.getElementById('state-not-drawn');
     const stateDrawnResult = document.getElementById('state-drawn-result');
     const verifBadge = document.getElementById('draw-verification-badge');
 
-    if (!this.settings.drawingOpen && !updatedStudent.hasDrawn) {
+    if (!this.settings.drawingOpen && (!updatedStudent.hasDrawn || !targetMate)) {
       stateDrawingClosed?.classList.remove('hidden');
       stateNotDrawn?.classList.add('hidden');
       stateDrawnResult?.classList.add('hidden');
       verifBadge?.classList.add('hidden');
       const closedDrawMsg = document.getElementById('ui-closed-drawing-msg');
       if (closedDrawMsg) closedDrawMsg.textContent = this.settings.closedDrawingMessage;
-    } else if (!updatedStudent.hasDrawn) {
+    } else if (!updatedStudent.hasDrawn || !targetMate) {
       stateDrawingClosed?.classList.add('hidden');
       stateNotDrawn?.classList.remove('hidden');
       stateDrawnResult?.classList.add('hidden');
       verifBadge?.classList.add('hidden');
       verifBadge?.classList.remove('inline-flex');
       document.getElementById('slot-machine-number').textContent = '#?';
-    } else if (targetMate) {
+    } else {
       stateDrawingClosed?.classList.add('hidden');
       stateNotDrawn?.classList.add('hidden');
       stateDrawnResult?.classList.remove('hidden');
@@ -1519,6 +2119,8 @@ class SecretMateApp {
   }
 
   animateAndDrawPouch(replay = false) {
+    if (this.isDrawing) return;
+
     if (!this.settings.drawingOpen) {
       this.showToast('La pioche est actuellement verrouillée par le BDE.', 'error');
       return;
@@ -1529,6 +2131,11 @@ class SecretMateApp {
     );
     if (!student) return;
 
+    if (this.participants.length < 2) {
+      this.showToast('Il faut au moins 2 participants inscrits pour effectuer la pioche.', 'error');
+      return;
+    }
+
     if (replay) {
       student.hasDrawn = false;
       this.renderStudentView();
@@ -1538,6 +2145,7 @@ class SecretMateApp {
     const btnDraw = document.getElementById('btn-draw-pouch');
     if (!slotEl || !btnDraw) return;
 
+    this.isDrawing = true;
     btnDraw.disabled = true;
     slotEl.parentElement.classList.add('slot-spinning');
 
@@ -1545,7 +2153,7 @@ class SecretMateApp {
     let ticks = 0;
     const maxTicks = 15;
 
-    const timer = setInterval(() => {
+    const timer = setInterval(async () => {
       let rand = Math.floor(Math.random() * total) + 1;
       if (rand === student.pouchNumber) {
         rand = (rand % total) + 1;
@@ -1555,17 +2163,47 @@ class SecretMateApp {
 
       if (ticks >= maxTicks) {
         clearInterval(timer);
-        slotEl.parentElement.classList.remove('slot-spinning');
-        btnDraw.disabled = false;
+        try {
+          await this.fetchLatestRemoteParticipants();
+          const currentStudent = this.participants.find(
+            p => p.email.toLowerCase() === (this.loggedInEmail || '').toLowerCase()
+          );
+          if (!currentStudent) return;
 
-        student.hasDrawn = true;
-        this.saveState();
-        this.renderAll();
+          const hasValidTarget =
+            currentStudent.drawnPouchNumber != null &&
+            currentStudent.drawnPouchNumber !== currentStudent.pouchNumber &&
+            this.participants.some(p => p.pouchNumber === currentStudent.drawnPouchNumber);
 
-        this.showToast(
-          `Tu as pioché la Pochette #${String(student.drawnPouchNumber).padStart(2, '0')} !`,
-          'success'
-        );
+          currentStudent.hasDrawn = true;
+
+          if (!hasValidTarget) {
+            this.participants = SecretMateAlgorithms.generateDerangement(
+              this.participants,
+              this.settings.prioritizeMentors,
+              this.settings.samePromoOnly
+            );
+            await this.saveFullState({ includeSettings: false });
+          } else {
+            await this.saveParticipantPatch({
+              [`participants/${sanitizeFirebaseKey(currentStudent.id)}/hasDrawn`]: true
+            });
+          }
+
+          this.renderAll();
+          const refreshed = this.participants.find(p => p.id === currentStudent.id);
+          this.showToast(
+            `Tu as pioché la Pochette #${String(refreshed?.drawnPouchNumber || 1).padStart(
+              2,
+              '0'
+            )} !`,
+            'success'
+          );
+        } finally {
+          this.isDrawing = false;
+          slotEl.parentElement.classList.remove('slot-spinning');
+          btnDraw.disabled = false;
+        }
       }
     }, 65);
   }
@@ -1579,9 +2217,12 @@ class SecretMateApp {
    * VUE 3 : COCKPIT BDE — CONTRÔLE TOTAL (PILOTAGE, LIEUX, CRUD, TEXTES)
    * ==========================================================================
    */
-  toggleRegistrationsOpen() {
+  async toggleRegistrationsOpen() {
+    const regMsg = document.getElementById('admin-closed-reg-msg')?.value.trim();
+    if (regMsg) this.settings.closedRegistrationMessage = regMsg;
+
     this.settings.registrationsOpen = !this.settings.registrationsOpen;
-    this.saveState();
+    await this.saveSettingsOnly();
     this.renderAll();
     this.showToast(
       this.settings.registrationsOpen
@@ -1591,17 +2232,22 @@ class SecretMateApp {
     );
   }
 
-  toggleDrawingOpen() {
+  async toggleDrawingOpen() {
+    const drawMsg = document.getElementById('admin-closed-draw-msg')?.value.trim();
+    if (drawMsg) this.settings.closedDrawingMessage = drawMsg;
+
     this.settings.drawingOpen = !this.settings.drawingOpen;
     if (this.settings.drawingOpen) {
-      // S'assure que le dérangement est à jour selon les options BDE dès l'ouverture de la pioche
+      await this.fetchLatestRemoteParticipants();
       this.participants = SecretMateAlgorithms.generateDerangement(
         this.participants,
         this.settings.prioritizeMentors,
         this.settings.samePromoOnly
       );
+      await this.saveFullState();
+    } else {
+      await this.saveSettingsOnly();
     }
-    this.saveState();
     this.renderAll();
     this.showToast(
       this.settings.drawingOpen
@@ -1614,7 +2260,8 @@ class SecretMateApp {
   /**
    * Action rapide BDE : Clôturer les inscriptions, mélanger et ouvrir la pioche aléatoire aux étudiants
    */
-  closeRegistrationsAndOpenDraw() {
+  async closeRegistrationsAndOpenDraw() {
+    await this.fetchLatestRemoteParticipants();
     this.settings.registrationsOpen = false;
     this.settings.drawingOpen = true;
     this.participants = SecretMateAlgorithms.assignNonAlphabeticalNumbers(this.participants);
@@ -1623,7 +2270,7 @@ class SecretMateApp {
       this.settings.prioritizeMentors,
       this.settings.samePromoOnly
     );
-    this.saveState();
+    await this.saveFullState();
     this.renderAll();
     this.showToast(
       '🎯 Inscriptions clôturées, tirage calculé et pioche aléatoire OUVERTE pour tous les étudiants !',
@@ -1631,9 +2278,10 @@ class SecretMateApp {
     );
   }
 
-  toggleMatchingOptions() {
+  async toggleMatchingOptions() {
     const samePromo = document.getElementById('chk-same-promo-only')?.checked ?? false;
     const prioritize = document.getElementById('chk-prioritize-mentors')?.checked ?? true;
+    await this.fetchLatestRemoteParticipants();
     this.settings.samePromoOnly = samePromo;
     this.settings.prioritizeMentors = prioritize;
     this.participants = SecretMateAlgorithms.generateDerangement(
@@ -1641,7 +2289,7 @@ class SecretMateApp {
       prioritize,
       samePromo
     );
-    this.saveState();
+    await this.saveFullState();
     this.renderAll();
     this.showToast(
       samePromo
@@ -1651,50 +2299,66 @@ class SecretMateApp {
     );
   }
 
-  saveRegistrationAndDrawMessages() {
+  async saveRegistrationAndDrawMessages() {
     const regMsg = document.getElementById('admin-closed-reg-msg')?.value.trim();
     const drawMsg = document.getElementById('admin-closed-draw-msg')?.value.trim();
     if (regMsg) this.settings.closedRegistrationMessage = regMsg;
     if (drawMsg) this.settings.closedDrawingMessage = drawMsg;
-    this.saveState();
+    await this.saveSettingsOnly();
     this.renderAll();
     this.showToast('Messages de statut enregistrés !', 'success');
   }
 
-  toggleMasterRevealSwitch() {
-    this.settings.masterRevealForce = !this.settings.masterRevealForce;
-    this.saveState();
-    this.renderAll();
+  async toggleMasterRevealSwitch() {
+    const val = document.getElementById('admin-custom-message')?.value.trim();
+    const lockedSub = document.getElementById('admin-locked-submessage')?.value.trim();
+    if (val) this.settings.customRevealMessage = val;
+    if (lockedSub) this.settings.lockedSubMessage = lockedSub;
 
-    if (this.settings.masterRevealForce) {
-      this.triggerRevealCelebration();
-    } else {
-      if (new Date(this.settings.revealScheduledAt).getTime() <= Date.now()) {
+    const currentlyRevealed = this.isRevealedNow();
+    if (currentlyRevealed) {
+      this.settings.masterRevealForce = false;
+      if (
+        !this.settings.revealScheduledAt ||
+        new Date(this.settings.revealScheduledAt).getTime() <= Date.now()
+      ) {
         this.settings.revealScheduledAt = new Date(
           Date.now() + 2 * 60 * 60 * 1000
         ).toISOString();
-        this.saveState();
-        this.renderAll();
       }
+      this.wasRevealedLastTick = false;
+      await this.saveSettingsOnly();
+      this.renderAll();
       this.showToast(
         '🔒 Mode Mystère activé : les identités et numéros WhatsApp sont masqués chez les étudiants.',
         'info'
       );
+    } else {
+      this.settings.masterRevealForce = true;
+      this.wasRevealedLastTick = true;
+      await this.saveSettingsOnly();
+      this.renderAll();
+      this.triggerRevealCelebration();
     }
   }
 
-  saveScheduledRevealTime() {
+  async saveScheduledRevealTime() {
     const input = document.getElementById('admin-reveal-datetime');
     if (!input || !input.value) return;
     const parsed = new Date(input.value);
     if (isNaN(parsed.getTime())) return;
+
+    const val = document.getElementById('admin-custom-message')?.value.trim();
+    const lockedSub = document.getElementById('admin-locked-submessage')?.value.trim();
+    if (val) this.settings.customRevealMessage = val;
+    if (lockedSub) this.settings.lockedSubMessage = lockedSub;
 
     this.settings.revealScheduledAt = parsed.toISOString();
     if (parsed.getTime() > Date.now()) {
       this.settings.masterRevealForce = false;
       this.wasRevealedLastTick = false;
     }
-    this.saveState();
+    await this.saveSettingsOnly();
     this.renderAll();
     this.showToast(
       `Dévoilement programmé au ${this.formatDateFr(this.settings.revealScheduledAt)} !`,
@@ -1702,12 +2366,17 @@ class SecretMateApp {
     );
   }
 
-  scheduleRevealInTenSeconds() {
+  async scheduleRevealInTenSeconds() {
+    const val = document.getElementById('admin-custom-message')?.value.trim();
+    const lockedSub = document.getElementById('admin-locked-submessage')?.value.trim();
+    if (val) this.settings.customRevealMessage = val;
+    if (lockedSub) this.settings.lockedSubMessage = lockedSub;
+
     const target = new Date(Date.now() + 10 * 1000);
     this.settings.revealScheduledAt = target.toISOString();
     this.settings.masterRevealForce = false;
     this.wasRevealedLastTick = false;
-    this.saveState();
+    await this.saveSettingsOnly();
     this.renderAll();
     this.showToast(
       '⏱️ Dévoilement programmé dans 10 secondes !',
@@ -1721,17 +2390,18 @@ class SecretMateApp {
     if (preview) preview.textContent = val;
   }
 
-  saveCustomRevealMessage() {
+  async saveCustomRevealMessage() {
     const val = document.getElementById('admin-custom-message')?.value.trim();
     const lockedSub = document.getElementById('admin-locked-submessage')?.value.trim();
     if (val) this.settings.customRevealMessage = val;
     if (lockedSub) this.settings.lockedSubMessage = lockedSub;
-    this.saveState();
+    await this.saveSettingsOnly();
     this.renderAll();
     this.showToast('Messages de révélation et d’attente mis à jour en temps réel !', 'success');
   }
 
-  runNonAlphabeticalShuffle() {
+  async runNonAlphabeticalShuffle() {
+    await this.fetchLatestRemoteParticipants();
     this.participants = SecretMateAlgorithms.assignNonAlphabeticalNumbers(this.participants);
     const prioritize = document.getElementById('chk-prioritize-mentors')?.checked ?? true;
     const samePromo = document.getElementById('chk-same-promo-only')?.checked ?? false;
@@ -1742,7 +2412,7 @@ class SecretMateApp {
       prioritize,
       samePromo
     );
-    this.saveState();
+    await this.saveFullState();
     this.renderAll();
     this.showToast(
       'Fisher-Yates exécuté : numéros #01 à #N réattribués (ordre non-alphabétique) !',
@@ -1750,7 +2420,8 @@ class SecretMateApp {
     );
   }
 
-  runFullDerangementDraw() {
+  async runFullDerangementDraw() {
+    await this.fetchLatestRemoteParticipants();
     const prioritize = document.getElementById('chk-prioritize-mentors')?.checked ?? true;
     const samePromo = document.getElementById('chk-same-promo-only')?.checked ?? false;
     this.settings.prioritizeMentors = prioritize;
@@ -1760,7 +2431,7 @@ class SecretMateApp {
       prioritize,
       samePromo
     );
-    this.saveState();
+    await this.saveFullState();
     this.renderAll();
     const audit = SecretMateAlgorithms.verifyDerangement(this.participants);
     this.showToast(
@@ -1774,9 +2445,10 @@ class SecretMateApp {
    * GESTION CRUD COMPLÈTE DES LIEUX INDICES DU CAMPUS MONT-HOUY PAR LE BDE
    * ==========================================================================
    */
-  renderAdminLocationsEditor() {
+  renderAdminLocationsEditor(force = false) {
     const container = document.getElementById('admin-locations-editor-list');
     if (!container) return;
+    if (!force && container.contains(document.activeElement)) return;
 
     container.innerHTML = this.settings.campusLocations
       .map(
@@ -1854,7 +2526,7 @@ class SecretMateApp {
       .join('');
   }
 
-  saveSingleCampusLocation(locId) {
+  async saveSingleCampusLocation(locId) {
     const loc = this.settings.campusLocations.find(l => l.id === locId);
     if (!loc) return;
 
@@ -1871,20 +2543,60 @@ class SecretMateApp {
     loc.challenge = newChallenge;
 
     if (oldName !== newName) {
+      await this.fetchLatestRemoteParticipants();
       this.participants.forEach(p => {
         if (p.location === oldName) p.location = newName;
       });
+      await this.saveFullState();
+    } else {
+      await this.saveSettingsOnly();
     }
 
-    this.saveState();
     this.renderAll();
+    this.renderAdminLocationsEditor(true);
     this.showToast(
       `Lieu « ${newName} » et son message d'indice mis à jour en temps réel !`,
       'success'
     );
   }
 
-  addNewCampusLocation() {
+  async saveAllCampusLocations() {
+    const renames = [];
+    this.settings.campusLocations.forEach(loc => {
+      const oldName = loc.name;
+      const newName = document.getElementById(`loc-name-${loc.id}`)?.value.trim() || oldName;
+      const newTag = document.getElementById(`loc-tag-${loc.id}`)?.value.trim() || loc.tag;
+      const newTip = document.getElementById(`loc-tip-${loc.id}`)?.value.trim() || loc.tip;
+      const newChallenge =
+        document.getElementById(`loc-challenge-${loc.id}`)?.value.trim() || loc.challenge;
+
+      loc.name = newName;
+      loc.tag = newTag;
+      loc.tip = newTip;
+      loc.challenge = newChallenge;
+
+      if (oldName !== newName) {
+        renames.push({ oldName, newName });
+      }
+    });
+
+    if (renames.length > 0) {
+      await this.fetchLatestRemoteParticipants();
+      this.participants.forEach(p => {
+        const rename = renames.find(r => r.oldName === p.location);
+        if (rename) p.location = rename.newName;
+      });
+      await this.saveFullState();
+    } else {
+      await this.saveSettingsOnly();
+    }
+
+    this.renderAll();
+    this.renderAdminLocationsEditor(true);
+    this.showToast('Tous les lieux du campus et leurs messages ont été enregistrés !', 'success');
+  }
+
+  async addNewCampusLocation() {
     const newLoc = {
       id: `loc-${Date.now()}`,
       name: 'Nouveau Lieu Mont-Houy (ex: Gymnase SUAPS)',
@@ -1893,12 +2605,13 @@ class SecretMateApp {
       challenge: 'Échangez vos meilleurs bons plans sport ou associations de l’IAE Valenciennes !'
     };
     this.settings.campusLocations.push(newLoc);
-    this.saveState();
+    await this.saveSettingsOnly();
     this.renderAll();
+    this.renderAdminLocationsEditor(true);
     this.showToast('Nouveau lieu ajouté ! Vous pouvez personnaliser son nom et son message.', 'success');
   }
 
-  deleteCampusLocation(locId) {
+  async deleteCampusLocation(locId) {
     if (this.settings.campusLocations.length <= 1) {
       this.showToast('Il doit rester au moins 1 lieu sur le campus.', 'error');
       return;
@@ -1907,14 +2620,16 @@ class SecretMateApp {
     this.settings.campusLocations = this.settings.campusLocations.filter(l => l.id !== locId);
     const fallbackName = this.settings.campusLocations[0].name;
 
+    await this.fetchLatestRemoteParticipants();
     if (removed) {
       this.participants.forEach(p => {
         if (p.location === removed.name) p.location = fallbackName;
       });
     }
 
-    this.saveState();
+    await this.saveFullState();
     this.renderAll();
+    this.renderAdminLocationsEditor(true);
     this.showToast('Lieu supprimé et participants réaffectés.', 'info');
   }
 
@@ -1988,6 +2703,8 @@ class SecretMateApp {
       document.getElementById('edit-p-r2').value = p.riddles?.[1] || '';
       document.getElementById('edit-p-r3').value = p.riddles?.[2] || '';
     } else {
+      const nextPouch =
+        this.participants.reduce((m, item) => Math.max(m, Number(item.pouchNumber) || 0), 0) + 1;
       document.getElementById('p-modal-title').textContent =
         'Ajouter un nouveau participant manuellement';
       document.getElementById('edit-p-id').value = '';
@@ -1998,8 +2715,8 @@ class SecretMateApp {
       document.getElementById('edit-p-promo').value =
         this.settings.promoOptions?.[0] || 'Management des Organisations (L3 / Master MDO)';
       document.getElementById('edit-p-role').value = 'nouveau';
-      document.getElementById('edit-p-pouch').value = this.participants.length + 1;
-      document.getElementById('edit-p-drawn').value = 1;
+      document.getElementById('edit-p-pouch').value = nextPouch;
+      document.getElementById('edit-p-drawn').value = '';
       document.getElementById('edit-p-backup').checked = false;
       document.getElementById('edit-p-hasdrawn').checked = false;
       document.getElementById('edit-p-r1').value = RIDDLE_IDEAS[1][0];
@@ -2017,7 +2734,7 @@ class SecretMateApp {
     modal?.classList.remove('flex');
   }
 
-  saveParticipantFromModal(event) {
+  async saveParticipantFromModal(event) {
     event.preventDefault();
     const id = document.getElementById('edit-p-id').value;
     const firstName = document.getElementById('edit-p-firstname').value.trim();
@@ -2029,14 +2746,15 @@ class SecretMateApp {
     const location = document.getElementById('edit-p-location').value;
     const secretType = document.getElementById('edit-p-secret').value;
     const pouchNumber = parseInt(document.getElementById('edit-p-pouch').value, 10) || 1;
-    const drawnPouchNumber = parseInt(document.getElementById('edit-p-drawn').value, 10) || null;
+    const rawDrawn = document.getElementById('edit-p-drawn').value;
+    const drawnPouchNumber = rawDrawn ? parseInt(rawDrawn, 10) || null : null;
     const isBackupMate = document.getElementById('edit-p-backup').checked;
     const hasDrawn = document.getElementById('edit-p-hasdrawn').checked;
     const r1 = document.getElementById('edit-p-r1').value.trim();
     const r2 = document.getElementById('edit-p-r2').value.trim();
     const r3 = document.getElementById('edit-p-r3').value.trim();
 
-    if (drawnPouchNumber === pouchNumber) {
+    if (!this.isStudentEditingOwnProfile && drawnPouchNumber === pouchNumber) {
       this.showToast(
         'Attention : un étudiant ne peut pas avoir un numéro pioché égal à son propre numéro de pochette (i ≠ p(i)) !',
         'error'
@@ -2044,11 +2762,14 @@ class SecretMateApp {
       return;
     }
 
+    await this.fetchLatestRemoteParticipants();
+
     if (id) {
       const idx = this.participants.findIndex(p => p.id === id);
       if (idx !== -1) {
-        this.participants[idx] = {
+        const updatedP = {
           ...this.participants[idx],
+          id: sanitizeFirebaseKey(this.participants[idx].id),
           firstName,
           lastName,
           email,
@@ -2062,10 +2783,17 @@ class SecretMateApp {
             ? {}
             : { pouchNumber, drawnPouchNumber, isBackupMate, hasDrawn })
         };
+        this.participants[idx] = updatedP;
+        this.closeParticipantModal();
+        await this.saveParticipantPatch({
+          [`participants/${updatedP.id}`]: updatedP
+        });
+      } else {
+        this.closeParticipantModal();
       }
     } else {
-      this.participants.push({
-        id: `stu-${Date.now()}`,
+      const newP = {
+        id: makeParticipantId(),
         firstName,
         lastName,
         email,
@@ -2079,20 +2807,58 @@ class SecretMateApp {
         drawnPouchNumber,
         isBackupMate,
         hasDrawn
-      });
+      };
+
+      if (!drawnPouchNumber) {
+        const insertion = SecretMateAlgorithms.insertNewParticipantIntoCycle(
+          this.participants,
+          newP,
+          this.settings.samePromoOnly
+        );
+        // Conserve le n° pochette choisi s'il n'est pas déjà pris
+        if (!this.participants.some(item => item.pouchNumber === pouchNumber)) {
+          const oldNewPouch = insertion.added.pouchNumber;
+          insertion.added.pouchNumber = pouchNumber;
+          if (insertion.modifiedPartner && insertion.modifiedPartner.drawnPouchNumber === oldNewPouch) {
+            insertion.modifiedPartner.drawnPouchNumber = pouchNumber;
+          }
+        }
+        insertion.added.hasDrawn = hasDrawn;
+        this.participants = insertion.participants;
+        this.closeParticipantModal();
+
+        if (insertion.rebuildAll) {
+          await this.saveFullState({ includeSettings: false });
+        } else {
+          const patch = {
+            [`participants/${insertion.added.id}`]: insertion.added
+          };
+          if (insertion.modifiedPartner && insertion.modifiedPartner.id !== insertion.added.id) {
+            patch[`participants/${insertion.modifiedPartner.id}/drawnPouchNumber`] =
+              insertion.modifiedPartner.drawnPouchNumber;
+          }
+          await this.saveParticipantPatch(patch);
+        }
+      } else {
+        this.participants.push(newP);
+        this.closeParticipantModal();
+        await this.saveParticipantPatch({
+          [`participants/${newP.id}`]: newP
+        });
+      }
     }
 
-    this.closeParticipantModal();
-    this.saveState();
     this.renderAll();
     this.showToast(`Profil de ${firstName} ${lastName} enregistré avec succès !`, 'success');
   }
 
-  resetStudentDraw(participantId) {
+  async resetStudentDraw(participantId) {
     const p = this.participants.find(item => item.id === participantId);
     if (!p) return;
     p.hasDrawn = false;
-    this.saveState();
+    await this.saveParticipantPatch({
+      [`participants/${sanitizeFirebaseKey(p.id)}/hasDrawn`]: false
+    });
     this.renderAll();
     this.showToast(
       `La pioche de ${p.firstName} ${p.lastName} a été réinitialisée : le bouton « Piocher » est à nouveau actif sur son écran !`,
@@ -2100,7 +2866,8 @@ class SecretMateApp {
     );
   }
 
-  deleteParticipant(participantId) {
+  async deleteParticipant(participantId) {
+    await this.fetchLatestRemoteParticipants();
     if (this.participants.length <= 2) {
       this.showToast('Il faut conserver au moins 2 participants pour le tirage.', 'error');
       return;
@@ -2113,7 +2880,7 @@ class SecretMateApp {
       this.settings.prioritizeMentors,
       this.settings.samePromoOnly
     );
-    this.saveState();
+    await this.saveFullState({ includeSettings: false });
     this.renderAll();
     this.showToast(
       `Participant ${target ? target.firstName : ''} supprimé et tirage recalculé.`,
@@ -2121,7 +2888,8 @@ class SecretMateApp {
     );
   }
 
-  assignBackupLutinFor(absentId) {
+  async assignBackupLutinFor(absentId) {
+    await this.fetchLatestRemoteParticipants();
     const absent = this.participants.find(p => p.id === absentId);
     if (!absent) return;
 
@@ -2137,7 +2905,9 @@ class SecretMateApp {
     absent.whatsapp = chosenLutin.whatsapp;
     absent.promo = `${chosenLutin.promo} • Lutin Secours`;
 
-    this.saveState();
+    await this.saveParticipantPatch({
+      [`participants/${sanitizeFirebaseKey(absent.id)}`]: absent
+    });
     this.renderAll();
     this.showToast(
       `🛟 Le Lutin de secours ${chosenLutin.firstName} remplace désormais la Pochette #${String(
@@ -2152,7 +2922,7 @@ class SecretMateApp {
    * GESTION DES TEXTES GLOBAUX & DES SECRETS DE PROMO PAR LE BDE
    * ==========================================================================
    */
-  saveGlobalSiteTexts() {
+  async saveGlobalSiteTexts() {
     this.settings.topAnnouncement =
       document.getElementById('cfg-top-announcement')?.value.trim() ||
       this.settings.topAnnouncement;
@@ -2174,7 +2944,7 @@ class SecretMateApp {
     this.settings.adminPin =
       document.getElementById('cfg-admin-pin')?.value.trim() || this.settings.adminPin;
 
-    this.saveState();
+    await this.saveSettingsOnly();
     this.renderAll();
     this.showToast('Tous les textes globaux et paramètres du site ont été mis à jour !', 'success');
   }
@@ -2184,9 +2954,10 @@ class SecretMateApp {
    * GESTION DE LA LISTE DÉROULANTE DES FILIÈRES IAE PAR LE BDE
    * ==========================================================================
    */
-  renderAdminPromosEditor() {
+  renderAdminPromosEditor(force = false) {
     const container = document.getElementById('admin-promos-editor-list');
     if (!container) return;
+    if (!force && container.contains(document.activeElement)) return;
 
     const promos =
       Array.isArray(this.settings.promoOptions) && this.settings.promoOptions.length > 0
@@ -2227,7 +2998,7 @@ class SecretMateApp {
       .join('');
   }
 
-  saveSinglePromoOption(idx) {
+  async saveSinglePromoOption(idx) {
     if (!Array.isArray(this.settings.promoOptions)) {
       this.settings.promoOptions = getDefaultPromoOptions();
     }
@@ -2240,28 +3011,33 @@ class SecretMateApp {
 
     this.settings.promoOptions[idx] = newVal;
     if (oldVal && oldVal !== newVal) {
+      await this.fetchLatestRemoteParticipants();
       this.participants.forEach(p => {
         if (p.promo === oldVal) p.promo = newVal;
       });
+      await this.saveFullState();
+    } else {
+      await this.saveSettingsOnly();
     }
 
-    this.saveState();
     this.renderAll();
+    this.renderAdminPromosEditor(true);
     this.showToast(`Filière « ${newVal} » mise à jour dans la liste déroulante !`, 'success');
   }
 
-  addPromoOption() {
+  async addPromoOption() {
     if (!Array.isArray(this.settings.promoOptions)) {
       this.settings.promoOptions = getDefaultPromoOptions();
     }
     const newPromo = `Nouvelle Filière IAE #${this.settings.promoOptions.length + 1}`;
     this.settings.promoOptions.push(newPromo);
-    this.saveState();
+    await this.saveSettingsOnly();
     this.renderAll();
+    this.renderAdminPromosEditor(true);
     this.showToast('Nouvelle filière ajoutée à la liste déroulante !', 'success');
   }
 
-  deletePromoOption(idx) {
+  async deletePromoOption(idx) {
     if (!Array.isArray(this.settings.promoOptions) || this.settings.promoOptions.length <= 1) {
       this.showToast('Il doit rester au moins 1 filière dans la liste déroulante.', 'error');
       return;
@@ -2270,18 +3046,21 @@ class SecretMateApp {
     this.settings.promoOptions.splice(idx, 1);
     const fallbackPromo = this.settings.promoOptions[0];
 
+    await this.fetchLatestRemoteParticipants();
     this.participants.forEach(p => {
       if (p.promo === removed) p.promo = fallbackPromo;
     });
 
-    this.saveState();
+    await this.saveFullState();
     this.renderAll();
+    this.renderAdminPromosEditor(true);
     this.showToast(`Filière supprimée et étudiants rattachés à « ${fallbackPromo} ».`, 'info');
   }
 
-  renderAdminSecretsEditor() {
+  renderAdminSecretsEditor(force = false) {
     const container = document.getElementById('admin-secrets-editor-list');
     if (!container) return;
+    if (!force && container.contains(document.activeElement)) return;
 
     container.innerHTML = this.settings.secretCategories
       .map(
@@ -2327,37 +3106,61 @@ class SecretMateApp {
       .join('');
   }
 
-  saveSingleSecretCategory(secId) {
+  async saveSingleSecretCategory(secId) {
     const sec = this.settings.secretCategories.find(s => s.id === secId);
     if (!sec) return;
+    const oldTitle = sec.title;
     sec.icon = document.getElementById(`sec-icon-${secId}`)?.value.trim() || '🎁';
-    sec.title = document.getElementById(`sec-title-${secId}`)?.value.trim() || sec.title;
+    sec.title = document.getElementById(`sec-title-${secId}`)?.value.trim() || oldTitle;
     sec.desc = document.getElementById(`sec-desc-${secId}`)?.value.trim() || sec.desc;
-    this.saveState();
+
+    if (oldTitle !== sec.title) {
+      await this.fetchLatestRemoteParticipants();
+      this.participants.forEach(p => {
+        if (p.secretType === oldTitle) p.secretType = sec.title;
+      });
+      await this.saveFullState();
+    } else {
+      await this.saveSettingsOnly();
+    }
+
     this.renderAll();
+    this.renderAdminSecretsEditor(true);
     this.showToast(`Catégorie « ${sec.title} » enregistrée !`, 'success');
   }
 
-  addSecretCategory() {
+  async addSecretCategory() {
     this.settings.secretCategories.push({
       id: `sec-${Date.now()}`,
       title: 'Nouveau Secret de promo',
       icon: '🎁',
       desc: 'Description personnalisée par le BDE.'
     });
-    this.saveState();
+    await this.saveSettingsOnly();
     this.renderAll();
+    this.renderAdminSecretsEditor(true);
     this.showToast('Nouvelle catégorie de Secret de promo ajoutée !', 'success');
   }
 
-  deleteSecretCategory(secId) {
+  async deleteSecretCategory(secId) {
     if (this.settings.secretCategories.length <= 1) {
       this.showToast('Il faut conserver au moins 1 catégorie.', 'error');
       return;
     }
+    const removed = this.settings.secretCategories.find(s => s.id === secId);
     this.settings.secretCategories = this.settings.secretCategories.filter(s => s.id !== secId);
-    this.saveState();
+    const fallbackTitle = this.settings.secretCategories[0].title;
+
+    await this.fetchLatestRemoteParticipants();
+    if (removed) {
+      this.participants.forEach(p => {
+        if (p.secretType === removed.title) p.secretType = fallbackTitle;
+      });
+    }
+
+    await this.saveFullState();
     this.renderAll();
+    this.renderAdminSecretsEditor(true);
     this.showToast('Catégorie supprimée.', 'info');
   }
 
@@ -2651,9 +3454,18 @@ class SecretMateApp {
     setTxt('ui-afterwork-title', this.settings.afterworkTitle);
     setTxt('ui-afterwork-spot', `📍 ${this.settings.afterworkSpot}`);
     setTxt('hero-budget-badge', `BUDGET : ${this.settings.budgetLabel.toUpperCase()}`);
-    setTxt('ui-domain-label-1', this.settings.emailDomain);
-    setTxt('ui-domain-label-2', this.settings.emailDomain);
-    setTxt('ui-domain-label-3', this.settings.emailDomain);
+
+    const domain = this.settings.emailDomain || '@uphf.fr';
+    document.querySelectorAll('.ui-domain-text').forEach(el => {
+      el.textContent = domain;
+    });
+    const regEmailInput = document.getElementById('reg-email');
+    if (regEmailInput) regEmailInput.placeholder = `prenom.nom${domain}`;
+    const loginEmailInput = document.getElementById('student-login-email');
+    if (loginEmailInput) loginEmailInput.placeholder = `prenom.nom${domain}`;
+    const adminSearchInput = document.getElementById('admin-search-input');
+    if (adminSearchInput) adminSearchInput.placeholder = `Rechercher nom, ${domain}, lieu, #...`;
+    document.title = `${this.settings.heroTitle} — IAE Valenciennes (Mont-Houy)`;
 
     // Gestion des boutons Connexion / Déconnexion dans le Header
     const studentConnected = this.loggedInEmail
@@ -2730,6 +3542,7 @@ class SecretMateApp {
     this.renderLandingDynamicElements();
     this.renderStudentView();
     this.renderAdminView();
+    this.updateSyncModeBadge();
 
     if (window.lucide) {
       window.lucide.createIcons();
@@ -2741,14 +3554,21 @@ class SecretMateApp {
    * EXPORT / IMPORT JSON & CSV + RESET BASE (BDE UNIQUEMENT)
    * ==========================================================================
    */
-  resetDemoData() {
+  async resetDemoData() {
+    if (
+      !window.confirm(
+        'Réinitialiser toute la base avec les 10 profils de démonstration ? Les inscriptions actuelles seront remplacées sur tous les appareils.'
+      )
+    ) {
+      return;
+    }
     this.participants = getInitialDemoParticipants();
     this.settings = getDefaultSettings();
     this.wasRevealedLastTick = false;
-    this.saveState();
+    await this.saveFullState({ usePut: true });
     this.renderAll();
     this.showToast(
-      'Base réinitialisée avec les 10 profils @uphf.fr et les 5 lieux du Mont-Houy !',
+      `Base réinitialisée avec les 10 profils ${this.settings.emailDomain} et les 5 lieux du Mont-Houy !`,
       'success'
     );
   }
@@ -2828,69 +3648,39 @@ class SecretMateApp {
   }
 
   handleFileImport(event) {
-    const file = event.target.files?.[0];
+    const input = event.target;
+    const file = input?.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = e => {
+    reader.onload = async e => {
       try {
         const txt = e.target.result;
-        if (file.name.endsWith('.json')) {
+        if (file.name.toLowerCase().endsWith('.json')) {
           const parsed = JSON.parse(txt);
-          if (Array.isArray(parsed.participants)) {
-            this.participants = parsed.participants;
-            if (parsed.settings) this.settings = { ...this.settings, ...parsed.settings };
-            this.saveState();
+          const importedParticipants = normalizeParticipants(parsed.participants);
+          if (importedParticipants.length > 0 || parsed.settings) {
+            if (importedParticipants.length > 0) {
+              this.participants = importedParticipants;
+            }
+            if (parsed.settings) {
+              this.settings = normalizeSettings(parsed.settings, this.settings);
+            }
+            await this.saveFullState({ usePut: true });
             this.renderAll();
-            this.showToast('Configuration et participants importés avec succès !', 'success');
+            this.showToast('Configuration et participants importés et synchronisés avec succès !', 'success');
+          } else {
+            this.showToast('Le fichier JSON ne contient pas de données valides.', 'error');
           }
+        } else {
+          this.showToast('Seul l’import de fichiers .json complets est pris en charge.', 'info');
         }
       } catch (err) {
         this.showToast('Erreur de lecture du fichier.', 'error');
+      } finally {
+        if (input) input.value = '';
       }
     };
     reader.readAsText(file);
-  }
-
-  /**
-   * ==========================================================================
-   * SYNCHRONISATION NATIVE GOOGLE FIREBASE REALTIME DATABASE
-   * (Automatique sur Firebase Hosting • Fallback localStorage sur ordinateur)
-   * ==========================================================================
-   */
-  async pushToFirebaseIfActive(payload) {
-    if (!this.isFirebaseActive) return;
-
-    try {
-      if (this.firebaseRef) {
-        await this.firebaseRef.set(payload);
-        return;
-      }
-      if (this.firebaseDbUrl) {
-        await fetch(`${this.firebaseDbUrl}/${FIREBASE_DB_NODE}.json`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-      }
-    } catch (e) {}
-  }
-
-  async pullFromFirebaseIfActive() {
-    if (!this.isFirebaseActive || !this.firebaseDbUrl) return;
-
-    try {
-      const res = await fetch(`${this.firebaseDbUrl}/${FIREBASE_DB_NODE}.json`, {
-        cache: 'no-store'
-      });
-      if (res.ok) {
-        const data = await res.json();
-        if (data && Array.isArray(data.participants)) {
-          this.applyIncomingState(data);
-        } else if (data === null) {
-          this.saveState(true);
-        }
-      }
-    } catch (e) {}
   }
 
   /**
