@@ -18,7 +18,7 @@ const BROADCAST_CHANNEL_NAME = 'secret_mate_iae_v4_channel';
 // (Lorsque vous ouvrez secretmateiaeva.html en local sur votre PC, le site reste
 // automatiquement en Mode Local pour vos tests !)
 // ============================================================================
-const FIREBASE_DATABASE_URL = 'https://secret-mate-4f93a-default-rtdb.europe-west1.firebasedatabase.app/';
+const FIREBASE_DATABASE_URL = 'https://secret-mate-4f93a-default-rtdb.europe-west1.firebasedatabase.app';
 
 /**
  * Helpers de nettoyage, normalisation et génération d'IDs compatibles Google Firebase
