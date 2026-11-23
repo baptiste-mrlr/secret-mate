@@ -1512,13 +1512,18 @@ class SecretMateApp {
    * NAVIGATION, CONNEXION & DÉCONNEXION (ÉTUDIANT & BDE)
    * ==========================================================================
    */
-  switchView(viewName) {
+  switchView(viewName, { scrollToTop = true } = {}) {
     if (viewName === 'admin' && !this.isBdeUnlocked) {
       this.openBdeAccess();
       return;
     }
 
     this.currentView = viewName;
+    const heroBanner = document.getElementById('hero-banner');
+    if (heroBanner) {
+      heroBanner.classList.toggle('hidden', viewName !== 'landing');
+    }
+
     ['landing', 'participant', 'admin'].forEach(v => {
       const sec = document.getElementById(`view-${v}`);
       const nav = document.getElementById(`nav-${v}`);
@@ -1538,7 +1543,21 @@ class SecretMateApp {
     });
 
     this.renderAll();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (scrollToTop) {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+  }
+
+  scrollToRegistration() {
+    if (this.currentView !== 'landing') {
+      this.switchView('landing', { scrollToTop: false });
+    }
+    setTimeout(() => {
+      document.getElementById('section-inscription')?.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+      });
+    }, 40);
   }
 
   switchBdeTab(tabName) {
@@ -3491,15 +3510,20 @@ class SecretMateApp {
 
     // Bouton Cockpit BDE & Déconnexion BDE dans le Header
     const navAdminUnlocked = document.getElementById('nav-admin-unlocked');
+    const mobNavAdmin = document.getElementById('mob-nav-admin');
     const btnHeaderBdeLogout = document.getElementById('header-btn-bde-logout');
     if (this.isBdeUnlocked) {
       navAdminUnlocked?.classList.remove('hidden');
       navAdminUnlocked?.classList.add('inline-flex');
+      mobNavAdmin?.classList.remove('hidden');
+      mobNavAdmin?.classList.add('flex');
       btnHeaderBdeLogout?.classList.remove('hidden');
       btnHeaderBdeLogout?.classList.add('inline-flex');
     } else {
       navAdminUnlocked?.classList.add('hidden');
       navAdminUnlocked?.classList.remove('inline-flex');
+      mobNavAdmin?.classList.add('hidden');
+      mobNavAdmin?.classList.remove('flex');
       btnHeaderBdeLogout?.classList.add('hidden');
       btnHeaderBdeLogout?.classList.remove('inline-flex');
     }
@@ -3508,10 +3532,10 @@ class SecretMateApp {
     const regPill = document.getElementById('ui-registration-status-pill');
     if (regPill) {
       if (this.settings.registrationsOpen) {
-        regPill.className = 'inline-flex items-center gap-1.5 font-mono text-[11px] font-bold text-mse-green';
+        regPill.className = 'inline-flex items-center gap-1.5 font-mono text-[11px] font-bold text-mse-green whitespace-nowrap';
         regPill.innerHTML = '<span class="w-2 h-2 rounded-full bg-mse-green animate-ping"></span> Inscriptions ouvertes';
       } else {
-        regPill.className = 'inline-flex items-center gap-1.5 font-mono text-[11px] font-bold text-mse-coral';
+        regPill.className = 'inline-flex items-center gap-1.5 font-mono text-[11px] font-bold text-mse-coral whitespace-nowrap';
         regPill.innerHTML = '<span class="w-2 h-2 rounded-full bg-mse-coral"></span> Inscriptions fermées';
       }
     }
