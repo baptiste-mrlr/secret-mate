@@ -36,6 +36,26 @@ function makeParticipantId() {
   return `stu-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
 }
 
+function safeStorageGet(key) {
+  try {
+    return window.localStorage ? window.localStorage.getItem(key) : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function safeStorageSet(key, value) {
+  try {
+    if (window.localStorage) window.localStorage.setItem(key, value);
+  } catch (e) {}
+}
+
+function safeStorageRemove(key) {
+  try {
+    if (window.localStorage) window.localStorage.removeItem(key);
+  } catch (e) {}
+}
+
 function generateSyncRev() {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -818,7 +838,7 @@ class SecretMateApp {
     this.currentView = 'landing';
     this.currentBdeTab = 'pilotage';
     // Aucun étudiant n'est connecté automatiquement en mode démo par défaut
-    this.loggedInEmail = localStorage.getItem(SESSION_EMAIL_KEY) || null;
+    this.loggedInEmail = safeStorageGet(SESSION_EMAIL_KEY) || null;
     this.isBdeUnlocked = false;
     this.adminFilter = 'all';
     this.wasRevealedLastTick = false;
@@ -841,14 +861,36 @@ class SecretMateApp {
   init() {
     this.loadState();
     this.wasRevealedLastTick = this.isRevealedNow();
-    this.initRealtimeSync();
-    this.initFirebaseOrLocalEngine();
-    this.initRoutingAndShortcuts();
-    this.initMasterClock();
-    this.renderAll();
+    try {
+      this.initRealtimeSync();
+    } catch (e) {
+      console.warn('Init sync restreinte:', e);
+    }
+    try {
+      this.initFirebaseOrLocalEngine();
+    } catch (e) {
+      console.warn('Init Firebase restreinte:', e);
+    }
+    try {
+      this.initRoutingAndShortcuts();
+    } catch (e) {
+      console.warn('Init raccourcis restreinte:', e);
+    }
+    try {
+      this.initMasterClock();
+    } catch (e) {
+      console.warn('Init horloge restreinte:', e);
+    }
+    try {
+      this.renderAll();
+    } catch (e) {
+      console.error('Erreur de rendu initial:', e);
+    }
 
     if (window.lucide) {
-      window.lucide.createIcons();
+      try {
+        window.lucide.createIcons();
+      } catch (e) {}
     }
   }
 
@@ -1334,13 +1376,17 @@ class SecretMateApp {
 
   initRealtimeSync() {
     // Synchronisation instantanée entre onglets pour les tests en local sur ordinateur
-    if ('BroadcastChannel' in window) {
-      this.broadcastChannel = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
-      this.broadcastChannel.onmessage = event => {
-        if (event.data && event.data.type === 'STATE_UPDATED') {
-          this.applyIncomingState(event.data.payload);
-        }
-      };
+    try {
+      if ('BroadcastChannel' in window) {
+        this.broadcastChannel = new BroadcastChannel(BROADCAST_CHANNEL_NAME);
+        this.broadcastChannel.onmessage = event => {
+          if (event.data && event.data.type === 'STATE_UPDATED') {
+            this.applyIncomingState(event.data.payload);
+          }
+        };
+      }
+    } catch (e) {
+      this.broadcastChannel = null;
     }
 
     window.addEventListener('storage', event => {
@@ -1544,7 +1590,23 @@ class SecretMateApp {
 
     this.renderAll();
     if (scrollToTop) {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
+      window.scrollTo(0, 0);
+      document.documentElement.scrollTop = 0;
+      document.body.scrollTop = 0;
+    }
+  }
+
+  openStudentLogin() {
+    this.switchView('participant');
+    if (!this.loggedInEmail) {
+      const input = document.getElementById('student-login-email');
+      if (input) {
+        try {
+          input.focus({ preventScroll: true });
+        } catch (e) {
+          input.focus();
+        }
+      }
     }
   }
 
@@ -1552,12 +1614,23 @@ class SecretMateApp {
     if (this.currentView !== 'landing') {
       this.switchView('landing', { scrollToTop: false });
     }
-    setTimeout(() => {
-      document.getElementById('section-inscription')?.scrollIntoView({
-        behavior: 'smooth',
-        block: 'start'
-      });
-    }, 40);
+    const scrollNow = () => {
+      const el = document.getElementById('section-inscription');
+      if (!el) return;
+      const headerEl = document.querySelector('header');
+      const offset = (headerEl ? headerEl.getBoundingClientRect().height : 72) + 12;
+      const targetY = Math.max(0, Math.round(el.getBoundingClientRect().top + window.pageYOffset - offset));
+      try {
+        window.scrollTo({ top: targetY, behavior: 'smooth' });
+      } catch (e) {
+        window.scrollTo(0, targetY);
+      }
+    };
+    if (typeof window.requestAnimationFrame === 'function') {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(scrollNow));
+    } else {
+      setTimeout(scrollNow, 40);
+    }
   }
 
   switchBdeTab(tabName) {
@@ -1636,7 +1709,7 @@ class SecretMateApp {
    */
   logoutStudent() {
     this.loggedInEmail = null;
-    localStorage.removeItem(SESSION_EMAIL_KEY);
+    safeStorageRemove(SESSION_EMAIL_KEY);
     const emailInput = document.getElementById('student-login-email');
     if (emailInput) emailInput.value = '';
     this.renderAll();
@@ -1790,7 +1863,7 @@ class SecretMateApp {
       }
 
       this.loggedInEmail = email;
-      localStorage.setItem(SESSION_EMAIL_KEY, email);
+      safeStorageSet(SESSION_EMAIL_KEY, email);
 
       document.getElementById('registration-form').reset();
       this.switchView('participant');
@@ -1949,7 +2022,7 @@ class SecretMateApp {
     }
 
     this.loggedInEmail = email;
-    localStorage.setItem(SESSION_EMAIL_KEY, email);
+    safeStorageSet(SESSION_EMAIL_KEY, email);
     this.renderAll();
     this.showToast(`Bienvenue ${found.firstName} ${found.lastName} !`, 'success');
   }
@@ -3449,7 +3522,7 @@ class SecretMateApp {
 
   impersonateStudent(email) {
     this.loggedInEmail = email;
-    localStorage.setItem(SESSION_EMAIL_KEY, email);
+    safeStorageSet(SESSION_EMAIL_KEY, email);
     this.switchView('participant');
   }
 
@@ -3765,6 +3838,13 @@ class SecretMateApp {
 }
 
 let app;
-window.addEventListener('DOMContentLoaded', () => {
+function bootSecretMateApp() {
+  if (window.app) return;
   app = new SecretMateApp();
-});
+  window.app = app;
+}
+if (document.readyState === 'loading') {
+  window.addEventListener('DOMContentLoaded', bootSecretMateApp);
+} else {
+  bootSecretMateApp();
+}
