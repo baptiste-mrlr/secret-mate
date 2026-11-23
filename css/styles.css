@@ -19,6 +19,11 @@
   --mse-sky: #00A8E8;
 }
 
+html,
+body {
+  overflow-x: clip;
+}
+
 body {
   background-color: var(--bg-cream);
   background-image:
@@ -115,6 +120,20 @@ body {
 
 .mystery-ticket::after {
   right: -13px;
+}
+
+@media (max-width: 639px) {
+  .mystery-ticket::before,
+  .mystery-ticket::after {
+    width: 16px;
+    height: 16px;
+  }
+  .mystery-ticket::before {
+    left: -9px;
+  }
+  .mystery-ticket::after {
+    right: -9px;
+  }
 }
 
 /* Sceau de cire / Badge Pochette */
