@@ -1100,9 +1100,10 @@ class SecretMateApp {
       const raw = localStorage.getItem(STATE_STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw);
-        if (parsed && parsed.participants != null) {
-          const normalized = normalizeParticipants(parsed.participants);
-          if (normalized.length > 0 || parsed.settings) {
+        if (parsed && (parsed.participantsEmpty === true || parsed.participants != null)) {
+          const normalized =
+            parsed.participantsEmpty === true ? [] : normalizeParticipants(parsed.participants);
+          if (parsed.participantsEmpty === true || normalized.length > 0 || parsed.settings) {
             this.lastUpdatedAt = parsed.updatedAt || null;
             this.lastSyncRev = parsed.syncRev || null;
             this.participants = normalized;
@@ -1128,6 +1129,7 @@ class SecretMateApp {
     const payload = sanitizeForFirebase({
       updatedAt: nowIso,
       syncRev: rev,
+      participantsEmpty: this.participants.length === 0,
       settings: this.settings,
       participants: this.participants
     });
@@ -1160,6 +1162,7 @@ class SecretMateApp {
     const body = {
       updatedAt: payload.updatedAt,
       syncRev: payload.syncRev,
+      participantsEmpty: this.participants.length === 0,
       ...patchFields
     };
     return await this.writeToFirebase('', body, 'PATCH');
@@ -1167,10 +1170,12 @@ class SecretMateApp {
 
   async saveFullState({ usePut = false, includeSettings = true } = {}) {
     const payload = this.saveLocalCache(true);
+    const isEmpty = this.participants.length === 0;
     const body = {
       updatedAt: payload.updatedAt,
       syncRev: payload.syncRev,
-      participants: participantsToFirebaseMap(this.participants)
+      participantsEmpty: isEmpty,
+      participants: isEmpty ? null : participantsToFirebaseMap(this.participants)
     };
     if (includeSettings) {
       body.settings = payload.settings;
@@ -1266,13 +1271,15 @@ class SecretMateApp {
       if (data === null) {
         // Premier démarrage sur base Firebase vierge : on y pousse les données initiales
         const payload = this.saveLocalCache(false);
+        const isEmpty = this.participants.length === 0;
         await this.writeToFirebase(
           '',
           {
             updatedAt: payload.updatedAt,
             syncRev: payload.syncRev,
+            participantsEmpty: isEmpty,
             settings: payload.settings,
-            participants: participantsToFirebaseMap(this.participants)
+            participants: isEmpty ? null : participantsToFirebaseMap(this.participants)
           },
           'PUT'
         );
@@ -1302,12 +1309,13 @@ class SecretMateApp {
       });
       if (!res.ok) return false;
       const raw = await res.json();
+      if (raw === null) {
+        this.participants = [];
+        return true;
+      }
       if (raw != null) {
-        const normalized = normalizeParticipants(raw);
-        if (normalized.length > 0) {
-          this.participants = normalized;
-          return true;
-        }
+        this.participants = normalizeParticipants(raw);
+        return true;
       }
     } catch (e) {}
     return false;
@@ -1324,11 +1332,10 @@ class SecretMateApp {
       if (!res.ok) return { ok: false, status: res.status };
       const data = await res.json();
       if (data && typeof data === 'object') {
-        if (data.participants != null) {
-          const normalized = normalizeParticipants(data.participants);
-          if (normalized.length > 0) {
-            this.participants = normalized;
-          }
+        if (data.participantsEmpty === true || data.participants == null) {
+          this.participants = [];
+        } else {
+          this.participants = normalizeParticipants(data.participants);
         }
         if (data.settings) {
           this.settings = normalizeSettings(data.settings, this.settings);
@@ -1433,11 +1440,16 @@ class SecretMateApp {
 
     const prevRevealed = this.isRevealedNow();
 
-    if (data.participants != null) {
+    if (data.participantsEmpty === true) {
+      this.participants = [];
+    } else if (data.participants != null) {
       const normalized = normalizeParticipants(data.participants);
       if (normalized.length > 0 || Array.isArray(data.participants)) {
         this.participants = normalized;
       }
+    } else if (data.settings != null || data.syncRev != null) {
+      // Firebase Realtime Database supprime automatiquement le nœud "participants" quand il est vide
+      this.participants = [];
     }
 
     if (data.settings) {
@@ -1453,6 +1465,7 @@ class SecretMateApp {
           sanitizeForFirebase({
             updatedAt: this.lastUpdatedAt,
             syncRev: this.lastSyncRev,
+            participantsEmpty: this.participants.length === 0,
             settings: this.settings,
             participants: this.participants
           })
@@ -2328,9 +2341,16 @@ class SecretMateApp {
     const drawMsg = document.getElementById('admin-closed-draw-msg')?.value.trim();
     if (drawMsg) this.settings.closedDrawingMessage = drawMsg;
 
-    this.settings.drawingOpen = !this.settings.drawingOpen;
-    if (this.settings.drawingOpen) {
+    if (!this.settings.drawingOpen) {
       await this.fetchLatestRemoteParticipants();
+      if (this.participants.length < 2) {
+        this.showToast(
+          'Il faut au moins 2 étudiants inscrits avant d’ouvrir la pioche aléatoire.',
+          'error'
+        );
+        return;
+      }
+      this.settings.drawingOpen = true;
       this.participants = SecretMateAlgorithms.generateDerangement(
         this.participants,
         this.settings.prioritizeMentors,
@@ -2338,6 +2358,7 @@ class SecretMateApp {
       );
       await this.saveFullState();
     } else {
+      this.settings.drawingOpen = false;
       await this.saveSettingsOnly();
     }
     this.renderAll();
@@ -2354,6 +2375,13 @@ class SecretMateApp {
    */
   async closeRegistrationsAndOpenDraw() {
     await this.fetchLatestRemoteParticipants();
+    if (this.participants.length < 2) {
+      this.showToast(
+        'Il faut au moins 2 étudiants inscrits avant de clôturer les inscriptions et ouvrir la pioche.',
+        'error'
+      );
+      return;
+    }
     this.settings.registrationsOpen = false;
     this.settings.drawingOpen = true;
     this.participants = SecretMateAlgorithms.assignNonAlphabeticalNumbers(this.participants);
@@ -2494,6 +2522,21 @@ class SecretMateApp {
 
   async runNonAlphabeticalShuffle() {
     await this.fetchLatestRemoteParticipants();
+    if (this.participants.length === 0) {
+      this.showToast('Aucun participant inscrit à mélanger.', 'error');
+      return;
+    }
+    if (this.participants.length === 1) {
+      this.participants[0].pouchNumber = 1;
+      this.participants[0].drawnPouchNumber = null;
+      await this.saveFullState();
+      this.renderAll();
+      this.showToast(
+        '1 seul participant inscrit (Pochette #01 attribuée). En attente d’un 2e inscrit pour le tirage.',
+        'info'
+      );
+      return;
+    }
     this.participants = SecretMateAlgorithms.assignNonAlphabeticalNumbers(this.participants);
     const prioritize = document.getElementById('chk-prioritize-mentors')?.checked ?? true;
     const samePromo = document.getElementById('chk-same-promo-only')?.checked ?? false;
@@ -2514,6 +2557,13 @@ class SecretMateApp {
 
   async runFullDerangementDraw() {
     await this.fetchLatestRemoteParticipants();
+    if (this.participants.length < 2) {
+      this.showToast(
+        'Il faut au moins 2 participants inscrits pour générer un tirage sans auto-attribution.',
+        'error'
+      );
+      return;
+    }
     const prioritize = document.getElementById('chk-prioritize-mentors')?.checked ?? true;
     const samePromo = document.getElementById('chk-same-promo-only')?.checked ?? false;
     this.settings.prioritizeMentors = prioritize;
@@ -2960,24 +3010,43 @@ class SecretMateApp {
 
   async deleteParticipant(participantId) {
     await this.fetchLatestRemoteParticipants();
-    if (this.participants.length <= 2) {
-      this.showToast('Il faut conserver au moins 2 participants pour le tirage.', 'error');
-      return;
-    }
     const target = this.participants.find(p => p.id === participantId);
+    if (!target) return;
+
     this.participants = this.participants.filter(p => p.id !== participantId);
-    this.participants = SecretMateAlgorithms.assignNonAlphabeticalNumbers(this.participants);
-    this.participants = SecretMateAlgorithms.generateDerangement(
-      this.participants,
-      this.settings.prioritizeMentors,
-      this.settings.samePromoOnly
-    );
+
+    if (
+      this.loggedInEmail &&
+      target.email &&
+      this.loggedInEmail.toLowerCase() === target.email.toLowerCase()
+    ) {
+      this.loggedInEmail = null;
+      safeStorageRemove(SESSION_EMAIL_KEY);
+    }
+
+    if (this.participants.length >= 2) {
+      this.participants = SecretMateAlgorithms.assignNonAlphabeticalNumbers(this.participants);
+      this.participants = SecretMateAlgorithms.generateDerangement(
+        this.participants,
+        this.settings.prioritizeMentors,
+        this.settings.samePromoOnly
+      );
+    } else if (this.participants.length === 1) {
+      this.participants[0].pouchNumber = 1;
+      this.participants[0].drawnPouchNumber = null;
+      this.participants[0].hasDrawn = false;
+    }
+
     await this.saveFullState({ includeSettings: false });
     this.renderAll();
-    this.showToast(
-      `Participant ${target ? target.firstName : ''} supprimé et tirage recalculé.`,
-      'info'
-    );
+
+    const msg =
+      this.participants.length === 0
+        ? `Participant ${target.firstName} supprimé : la liste est maintenant vide (0 inscrit).`
+        : this.participants.length === 1
+        ? `Participant ${target.firstName} supprimé : 1 seul inscrit restant (en attente d’un 2e participant).`
+        : `Participant ${target.firstName} supprimé et tirage recalculé.`;
+    this.showToast(msg, 'info');
   }
 
   async assignBackupLutinFor(absentId) {
@@ -3369,14 +3438,26 @@ class SecretMateApp {
     const chkMentors = document.getElementById('chk-prioritize-mentors');
     if (chkMentors) chkMentors.checked = !!this.settings.prioritizeMentors;
 
-    const audit = SecretMateAlgorithms.verifyDerangement(this.participants);
-    const modeLabel = this.settings.samePromoOnly
-      ? `Même filière uniquement (${audit.samePromoCount}/${audit.total})`
-      : 'Brassage inter-filières IAE';
-    setTxt(
-      'algo-audit-text',
-      `[AUDIT] Fisher-Yates Non-Alphabétique ✓ | Auto-attribution : ${audit.selfDraws} (∀i, i ≠ p(i)) ✓ | Bijection : ${audit.uniqueDraws}/${audit.total} ✓ | Mode : ${modeLabel}`
-    );
+    if (this.participants.length === 0) {
+      setTxt(
+        'algo-audit-text',
+        '[AUDIT] 0 inscrit actuellement — Base vierge prête pour les inscriptions de la nouvelle année !'
+      );
+    } else if (this.participants.length === 1) {
+      setTxt(
+        'algo-audit-text',
+        '[AUDIT] 1 seul inscrit — En attente d’au moins 2 participants pour calculer le tirage (∀i, i ≠ p(i)).'
+      );
+    } else {
+      const audit = SecretMateAlgorithms.verifyDerangement(this.participants);
+      const modeLabel = this.settings.samePromoOnly
+        ? `Même filière uniquement (${audit.samePromoCount}/${audit.total})`
+        : 'Brassage inter-filières IAE';
+      setTxt(
+        'algo-audit-text',
+        `[AUDIT] Fisher-Yates Non-Alphabétique ✓ | Auto-attribution : ${audit.selfDraws} (∀i, i ≠ p(i)) ✓ | Bijection : ${audit.uniqueDraws}/${audit.total} ✓ | Mode : ${modeLabel}`
+      );
+    }
 
     this.renderAdminTable();
     this.renderAdminLocationsEditor();
@@ -3404,6 +3485,21 @@ class SecretMateApp {
       }
       return true;
     });
+
+    if (filtered.length === 0) {
+      const emptyMsg =
+        this.participants.length === 0
+          ? 'Aucun participant inscrit (0) — La base est vierge et prête pour une nouvelle année !'
+          : 'Aucun participant ne correspond aux filtres ou à la recherche en cours.';
+      tbody.innerHTML = `
+        <tr>
+          <td colspan="6" class="py-10 px-4 text-center text-sm font-medium text-slate-500">
+            ${emptyMsg}
+          </td>
+        </tr>
+      `;
+      return;
+    }
 
     const pouchMap = new Map();
     this.participants.forEach(p => pouchMap.set(p.pouchNumber, p));
@@ -3666,6 +3762,39 @@ class SecretMateApp {
     this.renderAll();
     this.showToast(
       `Base réinitialisée avec les 10 profils ${this.settings.emailDomain} et les 5 lieux du Mont-Houy !`,
+      'success'
+    );
+  }
+
+  async clearAllParticipants() {
+    if (this.participants.length === 0) {
+      this.showToast('La liste des participants est déjà vide (0 inscrit).', 'info');
+      return;
+    }
+    const count = this.participants.length;
+    if (
+      !window.confirm(
+        `Supprimer définitivement les ${count} participant(s) inscrit(s) pour repartir à 0 cette année ?\n\n` +
+          `• Cette suppression sera synchronisée sur tous les appareils.\n` +
+          `• Vos réglages BDE (filières IAE, lieux du campus, textes, code PIN) sont conservés.\n` +
+          `• Les inscriptions seront rouvertes et la pioche / le dévoilement reverrouillés.`
+      )
+    ) {
+      return;
+    }
+
+    this.participants = [];
+    this.loggedInEmail = null;
+    safeStorageRemove(SESSION_EMAIL_KEY);
+    this.settings.registrationsOpen = true;
+    this.settings.drawingOpen = false;
+    this.settings.masterRevealForce = false;
+    this.wasRevealedLastTick = false;
+
+    await this.saveFullState({ usePut: true, includeSettings: true });
+    this.renderAll();
+    this.showToast(
+      `Base vidée : ${count} participant(s) supprimé(s) (0 inscrit). Vos réglages BDE sont conservés !`,
       'success'
     );
   }
