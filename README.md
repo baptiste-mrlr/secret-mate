@@ -17,13 +17,13 @@ Application web responsive (**Mobile-First**) dédiée à l'intégration et au p
 ## ✨ Fonctionnalités principales
 
 - **Formulaire d'inscription étudiant** :
-  - Validation du domaine universitaire configurable par le BDE.
+  - Validation du domaine universitaire configurable par le BDE et saisie du pseudo **Instagram (`@pseudo`)** (sans numéro de téléphone).
   - Liste déroulante des **filières / formations IAE** entièrement administrable par le BDE.
-  - Choix du profil (**Nouvel arrivant**, **Ancien / Parrain**, **Étudiant International**), sélection d'un **« Secret de promo »**, rédaction de **3 énigmes personnelles** et volontariat en tant que **Lutin de secours**.
+  - Choix du profil (**Nouvel arrivant**, **Ancien / Parrain**, **Étudiant International**), sélection d'un **« Secret de promo »**, rédaction de **3 énigmes personnelles** (avec générateur d'idées intégré) et volontariat en tant que **Binôme Solidaire (Lutin de secours)**.
 - **Espace personnel étudiant (`2. Ma Pioche`)** :
-  - Consultation et impression de la fiche pochette personnelle.
+  - Consultation et impression de la fiche pochette personnelle avec suivi guidé étape par étape.
   - Pioche aléatoire garantie sans auto-attribution (`∀i, p(i) ≠ i`), débloquée uniquement lorsque le BDE décide d'ouvrir la pioche (en général après clôture des inscriptions).
-  - Compte à rebours et dévoilement en direct de l'identité du binôme avec lien de contact **WhatsApp**.
+  - Compte à rebours et dévoilement en direct de l'identité du binôme avec lien de contact **Instagram** (et copie du `@pseudo` en un clic).
 - **Ergonomie mobile dédiée** :
   - Bandeau d'annonce BDE en haut de page qui défile sans chevaucher l'en-tête fixe.
   - Barre de navigation fixe en bas d'écran sur smartphone et pied de page ancré en bas de contenu.
