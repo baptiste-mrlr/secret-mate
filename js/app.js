@@ -97,15 +97,14 @@ function normalizeParticipants(raw) {
     const drawnPouchNumber =
       p.drawnPouchNumber != null && !isNaN(parsedDrawn) && parsedDrawn > 0 ? parsedDrawn : null;
 
-    const contact = String(p.instagram || p.whatsapp || '').trim();
+    const instagram = String(p.instagram || p.whatsapp || '').trim();
 
     result.push({
       id,
       firstName: String(p.firstName || '').trim(),
       lastName: String(p.lastName || '').trim(),
       email,
-      instagram: contact,
-      whatsapp: contact,
+      instagram,
       promo: String(p.promo || '').trim(),
       role: String(p.role || 'nouveau'),
       secretType: String(p.secretType || ''),
@@ -402,7 +401,6 @@ function getInitialDemoParticipants() {
       lastName: 'Martin',
       email: 'lucas.martin@uphf.fr',
       instagram: '@lucas.m_iae',
-      whatsapp: '@lucas.m_iae',
       promo: 'Management des Organisations (L3 / Master MDO)',
       role: 'nouveau',
       secretType: 'Café / Snack',
@@ -423,7 +421,6 @@ function getInitialDemoParticipants() {
       lastName: 'Lefebvre',
       email: 'camille.lefebvre@uphf.fr',
       instagram: '@camille.lfb',
-      whatsapp: '@camille.lfb',
       promo: 'Management des Organisations (L3 / Master MDO)',
       role: 'parrain',
       secretType: 'Fiches de révision / Prise de notes',
@@ -444,7 +441,6 @@ function getInitialDemoParticipants() {
       lastName: 'Benali',
       email: 'amine.benali@uphf.fr',
       instagram: '@amine.bnl',
-      whatsapp: '@amine.bnl',
       promo: 'Comptabilité, Contrôle & Audit (L3 / Master CCA)',
       role: 'parrain',
       secretType: 'Bons plans campus & stationnement/tram',
@@ -465,7 +461,6 @@ function getInitialDemoParticipants() {
       lastName: 'Martínez',
       email: 'sofia.martinez@uphf.fr',
       instagram: '@sofia.mtz_val',
-      whatsapp: '@sofia.mtz_val',
       promo: 'Comptabilité, Contrôle & Audit (L3 / Master CCA)',
       role: 'international',
       secretType: 'Spécialité culturelle internationale',
@@ -486,7 +481,6 @@ function getInitialDemoParticipants() {
       lastName: 'Dubois',
       email: 'hugo.dubois@uphf.fr',
       instagram: '@hugo.dbs',
-      whatsapp: '@hugo.dbs',
       promo: 'Gestion & Économie (L1 / L2 Licence)',
       role: 'nouveau',
       secretType: 'Bons plans campus & stationnement/tram',
@@ -507,7 +501,6 @@ function getInitialDemoParticipants() {
       lastName: 'Vasseur',
       email: 'chloe.vasseur@uphf.fr',
       instagram: '@chloe.vsr',
-      whatsapp: '@chloe.vsr',
       promo: 'Marketing, Vente & GRH (L3 / Master)',
       role: 'parrain',
       secretType: 'Fiches de révision / Prise de notes',
@@ -528,7 +521,6 @@ function getInitialDemoParticipants() {
       lastName: 'Rossi',
       email: 'matteo.rossi@uphf.fr',
       instagram: '@matteo.rossi_iae',
-      whatsapp: '@matteo.rossi_iae',
       promo: 'Management des Organisations (L3 / Master MDO)',
       role: 'international',
       secretType: 'Spécialité culturelle internationale',
@@ -549,7 +541,6 @@ function getInitialDemoParticipants() {
       lastName: 'Carpentier',
       email: 'lea.carpentier@uphf.fr',
       instagram: '@lea.crpt',
-      whatsapp: '@lea.crpt',
       promo: 'Management des Organisations (L3 / Master MDO)',
       role: 'nouveau',
       secretType: 'Café / Snack',
@@ -570,7 +561,6 @@ function getInitialDemoParticipants() {
       lastName: 'Delattre',
       email: 'thomas.delattre@uphf.fr',
       instagram: '@thomas.dltr',
-      whatsapp: '@thomas.dltr',
       promo: 'Marketing, Vente & GRH (L3 / Master)',
       role: 'parrain',
       secretType: 'Bons plans campus & stationnement/tram',
@@ -591,7 +581,6 @@ function getInitialDemoParticipants() {
       lastName: 'Boucher',
       email: 'ines.boucher@uphf.fr',
       instagram: '@ines.bchr',
-      whatsapp: '@ines.bchr',
       promo: 'Gestion & Économie (L1 / L2 Licence)',
       role: 'nouveau',
       secretType: 'Café / Snack',
@@ -905,6 +894,7 @@ class SecretMateApp {
     this.isDrawing = false;
     this.riddleHistory = { 1: [], 2: [], 3: [] };
     this.lastNotFoundEmail = '';
+    this.revealedInstagramHandle = '';
 
     this.init();
   }
@@ -1760,10 +1750,14 @@ class SecretMateApp {
     }, 350);
   }
 
+  isPhoneNumberInput(raw) {
+    return /^\+?[\d\s.\-()]{8,}$/.test(String(raw || '').trim());
+  }
+
   normalizeInstagramOrContact(raw) {
     const trimmed = String(raw || '').trim();
     if (!trimmed) return '';
-    if (/^\+?[\d\s.\-()]{8,}$/.test(trimmed)) {
+    if (this.isPhoneNumberInput(trimmed)) {
       return trimmed;
     }
     let handle = trimmed
@@ -1775,25 +1769,45 @@ class SecretMateApp {
     return handle ? `@${handle}` : trimmed;
   }
 
-  formatContactDetails(raw, targetMate = null, currentStudent = null) {
+  isValidInstagramHandle(raw) {
+    const trimmed = String(raw || '').trim();
+    if (!trimmed || this.isPhoneNumberInput(trimmed)) return false;
+    const normalized = this.normalizeInstagramOrContact(trimmed);
+    const handle = normalized.replace(/^@+/, '');
+    return /^[a-zA-Z0-9._]{1,30}$/.test(handle);
+  }
+
+  validateInstagramField(inputEl) {
+    const val = (inputEl?.value || '').trim();
+    const errEl = document.getElementById('reg-instagram-error');
+    if (!errEl) return this.isValidInstagramHandle(val);
+    if (!val) {
+      errEl.classList.add('hidden');
+      return false;
+    }
+    if (this.isPhoneNumberInput(val)) {
+      errEl.textContent = 'Entre ton pseudo Instagram (ex : @prenom.iae), pas ton numéro de téléphone.';
+      errEl.classList.remove('hidden');
+      return false;
+    }
+    const valid = this.isValidInstagramHandle(val);
+    errEl.textContent = 'Pseudo Instagram invalide (lettres, chiffres, points ou _ uniquement, ex : @prenom.iae).';
+    errEl.classList.toggle('hidden', valid);
+    return valid;
+  }
+
+  formatContactDetails(raw) {
     const normalized = this.normalizeInstagramOrContact(raw);
-    if (/^\+?[\d\s.\-()]{8,}$/.test(normalized)) {
-      const cleanPhone = normalized.replace(/[^0-9]/g, '').replace(/^0/, '33');
-      const waMsg = targetMate && currentStudent
-        ? encodeURIComponent(
-            `Salut ${targetMate.firstName} ! 🎉 C'est ${currentStudent.firstName} (${currentStudent.promo}) de l'IAE Valenciennes : j'ai pioché ta Pochette Secret Mate #${String(
-              targetMate.pouchNumber
-            ).padStart(2, '0')} ! On se retrouve à l'Afterwork ?`
-          )
-        : '';
+    if (this.isPhoneNumberInput(normalized)) {
+      const cleanTel = normalized.replace(/[^+\d]/g, '');
       return {
         isLegacyPhone: true,
         normalized,
-        handle: normalized,
-        shortText: `📱 ${normalized}`,
-        displayText: `📱 WhatsApp : ${normalized}`,
-        href: waMsg ? `https://wa.me/${cleanPhone}?text=${waMsg}` : `https://wa.me/${cleanPhone}`,
-        buttonLabel: 'Écrire sur WhatsApp & Créer notre binôme'
+        handle: '',
+        shortText: `📞 ${normalized}`,
+        displayText: `📞 Ancien contact (à passer sur Instagram) : ${normalized}`,
+        href: cleanTel ? `tel:${cleanTel}` : '#',
+        buttonLabel: `Contacter (${normalized})`
       };
     }
 
@@ -1807,6 +1821,43 @@ class SecretMateApp {
       href: handle ? `https://www.instagram.com/${encodeURIComponent(handle)}/` : '#',
       buttonLabel: handle ? `Contacter @${handle} sur Instagram` : 'Contacter sur Instagram'
     };
+  }
+
+  async copyRevealedInstagram() {
+    const handle = this.revealedInstagramHandle;
+    if (!handle) {
+      this.showToast('Aucun pseudo Instagram disponible à copier.', 'error');
+      return;
+    }
+    let copied = false;
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(handle);
+        copied = true;
+      }
+    } catch (e) {
+      copied = false;
+    }
+    if (!copied) {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = handle;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        copied = document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch (e) {
+        copied = false;
+      }
+    }
+    if (copied) {
+      this.showToast(`Pseudo ${handle} copié ! Colle-le dans Instagram pour lui écrire.`, 'success');
+    } else {
+      this.showToast(`Pseudo à copier : ${handle}`, 'info');
+    }
   }
 
   switchBdeTab(tabName) {
@@ -1951,7 +2002,9 @@ class SecretMateApp {
     const firstName = document.getElementById('reg-firstname').value.trim();
     const lastName = document.getElementById('reg-lastname').value.trim();
     const email = document.getElementById('reg-email').value.trim().toLowerCase();
-    const contact = this.normalizeInstagramOrContact(document.getElementById('reg-whatsapp').value);
+    const instagramInputEl = document.getElementById('reg-instagram');
+    const rawInstagram = (instagramInputEl?.value || '').trim();
+    const contact = this.normalizeInstagramOrContact(rawInstagram);
     const promo = document.getElementById('reg-promo').value.trim();
     const role = document.querySelector('input[name="reg-role"]:checked')?.value || 'nouveau';
     const secretType =
@@ -1972,8 +2025,19 @@ class SecretMateApp {
       return;
     }
 
-    if (!firstName || !lastName || !contact || !promo || !r1 || !r2 || !r3) {
-      this.showToast('Merci de compléter tous les champs (y compris ton Instagram) et tes 3 énigmes.', 'error');
+    if (!firstName || !lastName || !rawInstagram || !promo || !r1 || !r2 || !r3) {
+      this.showToast('Merci de compléter tous les champs (y compris ton pseudo Instagram) et tes 3 énigmes.', 'error');
+      return;
+    }
+
+    if (!this.isValidInstagramHandle(rawInstagram)) {
+      this.validateInstagramField(instagramInputEl);
+      this.showToast(
+        this.isPhoneNumberInput(rawInstagram)
+          ? 'Entre ton pseudo Instagram (ex : @prenom.iae), pas ton numéro de téléphone !'
+          : 'Pseudo Instagram invalide (ex : @prenom.iae).',
+        'error'
+      );
       return;
     }
 
@@ -2004,7 +2068,6 @@ class SecretMateApp {
           firstName,
           lastName,
           instagram: contact,
-          whatsapp: contact,
           promo,
           role,
           secretType,
@@ -2023,7 +2086,6 @@ class SecretMateApp {
           lastName,
           email,
           instagram: contact,
-          whatsapp: contact,
           promo,
           role,
           secretType,
@@ -2060,6 +2122,7 @@ class SecretMateApp {
       safeStorageSet(SESSION_EMAIL_KEY, email);
 
       document.getElementById('registration-form').reset();
+      document.getElementById('reg-instagram-error')?.classList.add('hidden');
       this.updateSelectedLocationPreview();
       this.switchView('participant');
 
@@ -2317,6 +2380,11 @@ class SecretMateApp {
 
     document.getElementById('p-fullname').textContent = `${student.firstName} ${student.lastName}`;
     document.getElementById('p-email-promo').textContent = `${student.email} • ${student.promo}`;
+    const myInstaEl = document.getElementById('p-my-instagram');
+    if (myInstaEl) {
+      const myContact = this.formatContactDetails(student.instagram || student.whatsapp);
+      myInstaEl.textContent = `📸 Mon Instagram : ${myContact.normalized || 'Non renseigné'} (masqué jusqu'au dévoilement)`;
+    }
     document.getElementById('p-my-number').textContent = myNumFormatted;
     document.getElementById('p-card-number').textContent = `Pochette ${myNumFormatted}`;
     document.getElementById('p-role-badge').textContent = roleMap[student.role] || 'Participant';
@@ -2467,11 +2535,17 @@ class SecretMateApp {
     if (!revealed || !updatedStudent.hasDrawn || !targetMate) {
       lockedBanner?.classList.remove('hidden');
       unlockedBanner?.classList.add('hidden');
+      this.revealedInstagramHandle = '';
       document.getElementById('revealed-mate-name').textContent = 'Identité masquée';
       document.getElementById('revealed-mate-promo').textContent = '';
-      document.getElementById('revealed-mate-whatsapp-txt').textContent = '';
-      const contactBtn = document.getElementById('revealed-mate-whatsapp-btn');
+      document.getElementById('revealed-mate-instagram-txt').textContent = '';
+      const contactBtn = document.getElementById('revealed-mate-instagram-btn');
       if (contactBtn) contactBtn.href = '#';
+      const copyBtn = document.getElementById('revealed-mate-copy-btn');
+      if (copyBtn) {
+        copyBtn.classList.add('hidden');
+        copyBtn.classList.remove('inline-flex');
+      }
     } else {
       lockedBanner?.classList.add('hidden');
       unlockedBanner?.classList.remove('hidden');
@@ -2488,22 +2562,31 @@ class SecretMateApp {
       document.getElementById('revealed-mate-promo').textContent =
         `${targetMate.promo} • ${targetMate.email}`;
 
-      const contactInfo = this.formatContactDetails(
-        targetMate.instagram || targetMate.whatsapp,
-        targetMate,
-        updatedStudent
-      );
-      document.getElementById('revealed-mate-whatsapp-txt').textContent = contactInfo.displayText;
+      const contactInfo = this.formatContactDetails(targetMate.instagram || targetMate.whatsapp);
+      document.getElementById('revealed-mate-instagram-txt').textContent = contactInfo.displayText;
 
-      const contactBtn = document.getElementById('revealed-mate-whatsapp-btn');
+      const contactBtn = document.getElementById('revealed-mate-instagram-btn');
       const contactLabel = document.getElementById('revealed-mate-contact-btn-label');
+      const copyBtn = document.getElementById('revealed-mate-copy-btn');
       if (contactBtn) {
         contactBtn.href = contactInfo.href;
-        contactBtn.classList.toggle('bg-emerald-600', contactInfo.isLegacyPhone);
-        contactBtn.classList.toggle('hover:bg-emerald-700', contactInfo.isLegacyPhone);
       }
       if (contactLabel) {
         contactLabel.textContent = contactInfo.buttonLabel;
+      }
+      if (!contactInfo.isLegacyPhone && contactInfo.handle) {
+        this.revealedInstagramHandle = `@${contactInfo.handle}`;
+        if (copyBtn) {
+          copyBtn.classList.remove('hidden');
+          copyBtn.classList.add('inline-flex');
+          copyBtn.textContent = `📋 Copier @${contactInfo.handle}`;
+        }
+      } else {
+        this.revealedInstagramHandle = '';
+        if (copyBtn) {
+          copyBtn.classList.add('hidden');
+          copyBtn.classList.remove('inline-flex');
+        }
       }
     }
   }
@@ -3117,7 +3200,7 @@ class SecretMateApp {
       document.getElementById('edit-p-firstname').value = p.firstName;
       document.getElementById('edit-p-lastname').value = p.lastName;
       document.getElementById('edit-p-email').value = p.email;
-      document.getElementById('edit-p-whatsapp').value = p.instagram || p.whatsapp || '';
+      document.getElementById('edit-p-instagram').value = p.instagram || p.whatsapp || '';
       document.getElementById('edit-p-promo').value = p.promo;
       document.getElementById('edit-p-role').value = p.role;
       document.getElementById('edit-p-location').value = p.location;
@@ -3138,7 +3221,7 @@ class SecretMateApp {
       document.getElementById('edit-p-firstname').value = '';
       document.getElementById('edit-p-lastname').value = '';
       document.getElementById('edit-p-email').value = `prenom.nom${this.settings.emailDomain}`;
-      document.getElementById('edit-p-whatsapp').value = '@prenom.iae';
+      document.getElementById('edit-p-instagram').value = '@prenom.iae';
       document.getElementById('edit-p-promo').value =
         this.settings.promoOptions?.[0] || 'Management des Organisations (L3 / Master MDO)';
       document.getElementById('edit-p-role').value = 'nouveau';
@@ -3167,9 +3250,17 @@ class SecretMateApp {
     const firstName = document.getElementById('edit-p-firstname').value.trim();
     const lastName = document.getElementById('edit-p-lastname').value.trim();
     const email = document.getElementById('edit-p-email').value.trim().toLowerCase();
-    const contact = this.normalizeInstagramOrContact(
-      document.getElementById('edit-p-whatsapp').value
-    );
+    const rawInstagram = document.getElementById('edit-p-instagram').value.trim();
+    if (this.isStudentEditingOwnProfile && !this.isValidInstagramHandle(rawInstagram)) {
+      this.showToast(
+        this.isPhoneNumberInput(rawInstagram)
+          ? 'Entre ton pseudo Instagram (ex : @prenom.iae), pas ton numéro de téléphone !'
+          : 'Pseudo Instagram invalide (ex : @prenom.iae).',
+        'error'
+      );
+      return;
+    }
+    const contact = this.normalizeInstagramOrContact(rawInstagram);
     const promo = document.getElementById('edit-p-promo').value.trim();
     const role = document.getElementById('edit-p-role').value;
     const location = document.getElementById('edit-p-location').value;
@@ -3203,7 +3294,6 @@ class SecretMateApp {
           lastName,
           email,
           instagram: contact,
-          whatsapp: contact,
           promo,
           role,
           location,
@@ -3213,6 +3303,7 @@ class SecretMateApp {
             ? {}
             : { pouchNumber, drawnPouchNumber, isBackupMate, hasDrawn })
         };
+        delete updatedP.whatsapp;
         this.participants[idx] = updatedP;
         this.closeParticipantModal();
         await this.saveParticipantPatch({
@@ -3228,7 +3319,6 @@ class SecretMateApp {
         lastName,
         email,
         instagram: contact,
-        whatsapp: contact,
         promo,
         role,
         location,
@@ -3352,8 +3442,8 @@ class SecretMateApp {
     const chosenLutin = lutins[Math.floor(Math.random() * lutins.length)];
     absent.firstName = chosenLutin.firstName;
     absent.lastName = `${chosenLutin.lastName} (Lutin BDE Secours)`;
-    absent.instagram = chosenLutin.instagram || chosenLutin.whatsapp;
-    absent.whatsapp = chosenLutin.instagram || chosenLutin.whatsapp;
+    absent.instagram = chosenLutin.instagram || chosenLutin.whatsapp || '';
+    delete absent.whatsapp;
     absent.promo = `${chosenLutin.promo} • Lutin Secours`;
 
     await this.saveParticipantPatch({
@@ -3770,7 +3860,7 @@ class SecretMateApp {
       if (this.adminFilter === 'international' && p.role !== 'international') return false;
       if (this.adminFilter === 'backup' && !p.isBackupMate) return false;
       if (query) {
-        const hay = `${p.firstName} ${p.lastName} ${p.email} ${p.promo} ${p.location} ${p.secretType} #${p.pouchNumber}`.toLowerCase();
+        const hay = `${p.firstName} ${p.lastName} ${p.email} ${p.instagram || p.whatsapp || ''} ${p.promo} ${p.location} ${p.secretType} #${p.pouchNumber}`.toLowerCase();
         return hay.includes(query);
       }
       return true;
@@ -3942,7 +4032,7 @@ class SecretMateApp {
     const loginEmailInput = document.getElementById('student-login-email');
     if (loginEmailInput) loginEmailInput.placeholder = `prenom.nom${domain}`;
     const adminSearchInput = document.getElementById('admin-search-input');
-    if (adminSearchInput) adminSearchInput.placeholder = `Rechercher nom, ${domain}, lieu, #...`;
+    if (adminSearchInput) adminSearchInput.placeholder = `Rechercher nom, ${domain}, @insta, lieu, #...`;
     document.title = `${this.settings.heroTitle} — IAE Valenciennes (Mont-Houy)`;
 
     // Gestion des boutons Connexion / Déconnexion dans le Header
